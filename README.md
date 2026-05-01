@@ -631,7 +631,7 @@ Like `twk list` and `twk show`, the table portion auto-pages through `less -FRX`
 
 ---
 
-### `twk commit`
+### `twk commit [--dry-run]`
 
 Pushes all uncommitted time entries to Azure DevOps by updating the configured time field on each work item.
 
@@ -649,6 +649,20 @@ Committing time entries to Azure DevOps...
   #48220: committed 1.16h (total: 1.16h)
 
 Done: 2 committed, 1 failed/skipped.
+```
+
+**Dry-run preview.** Pass `--dry-run` to see the per-session projection (existing AzDO value + your tracked hours = post-commit total) without writing anything. Reads against AzDO still happen (to fetch existing time); only the writes are suppressed. Sessions stay uncommitted, ready for a real `twk commit` when you're satisfied.
+
+```
+$ twk commit --dry-run
+DRY RUN — no changes will be sent to Azure DevOps.
+
+  #48210: would commit 3.38h (existing 4.20h → total 7.58h)
+  #48215: skipped (still running - end or pause first)
+  #48220: would commit 1.16h (existing 0h → total 1.16h)
+
+Would commit 4.54h across 2 sessions, skipping 1.
+(no changes were sent to Azure DevOps; sessions remain uncommitted)
 ```
 
 ---
@@ -717,6 +731,7 @@ Options:
     --me                 (assign only) Assign yourself based on the PAT's identity
     --all                (assign, users) Use org-wide user list (Graph API; needs PAT scope)
     --discussion         (show only) Append the AzDO Discussion thread (comments)
+    --dry-run            (commit only) Preview what would be pushed without writing
 
 Note: --state X on any time-tracking command also fires an immediate PATCH to AzDO.
 

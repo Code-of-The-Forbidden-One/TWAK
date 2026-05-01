@@ -346,10 +346,17 @@ Cells display
 .I ?
 if the lookup fails for any reason; the command itself does not fail.
 .TP
-.B commit
+.B commit \fR[\fB\-\-dry-run\fR]
 Push accumulated time to the configured time field on each work item in
 Azure DevOps. The target field depends on work item type (Task vs Feature)
 as configured during init. Time is additive. Running sessions are skipped.
+.IP
+With
+.BR \-\-dry-run ,
+print the per-session projection (existing AzDO value, hours to add,
+post-commit total) without writing anything. Sessions are not archived
+and remain uncommitted. AzDO is still read to compute the projection;
+only writes are suppressed.
 .TP
 .B version \fR(also \fB\-v\fR, \fB\-\-version\fR)
 Print the version number. The flag forms

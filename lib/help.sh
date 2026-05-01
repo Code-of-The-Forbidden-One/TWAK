@@ -460,7 +460,17 @@ HELP
 twk commit - Push time entries to Azure DevOps
 
 Usage:
-    twk commit
+    twk commit [--dry-run]
+
+Options:
+    --dry-run   Preview every session that would be pushed,
+                including the existing AzDO time and the
+                projected new total per work item, without
+                writing anything to AzDO. Sessions are not
+                archived. Use this to sanity-check before
+                running the real commit. Reads from AzDO are
+                still made (to fetch existing time for the
+                projection).
 
 Pushes accumulated time to the configured time field on each tracked
 work item. The target field depends on the work item type (Task vs

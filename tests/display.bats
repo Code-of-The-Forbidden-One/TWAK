@@ -1447,6 +1447,121 @@ EOF
     [[ "${output}" != *"users)"* ]] || { echo "should be singular: ${output}"; return 1; }
 }
 
+@test "cmd_commit: rejects unknown arguments" {
+    twk_write_fake_config
+
+    run cmd_commit --bogus
+    assert_status 1
+    assert_output_contains "unknown argument '--bogus'"
+    assert_output_contains "Usage: twk commit"
+}
+
+@test "cmd_commit --dry-run: prints DRY RUN header and per-session projection" {
+    require_binary jq
+    require_binary bc
+    twk_write_fake_config
+
+    # Two sessions: one paused (committable), one running (skipped).
+    local now hour_ago
+    now="$(date +%s)"
+    hour_ago=$(( now - 3600 ))
+    mkdir -p "${TWK_DATA_DIR}"
+    {
+        echo "start|${hour_ago}"
+        echo "pause|${now}"
+    } > "${TWK_DATA_DIR}/100.session"
+    echo "start|${now}" > "${TWK_DATA_DIR}/200.session"
+
+    azdo_resolve_time_field() { echo "Custom.TaskTime"; }
+    azdo_fetch_work_item() {
+        printf '%s' '{"id":'"$1"',"fields":{"Custom.TaskTime":2.5}}'
+    }
+
+    # Both writes must NOT fire in dry-run mode.
+    local patch_called=false
+    local archive_called=false
+    azdo_update_time_spent() { patch_called=true; }
+    session_mark_committed() { archive_called=true; }
+
+    run cmd_commit --dry-run
+    assert_status 0
+    assert_output_contains "DRY RUN"
+    assert_output_contains "would commit"
+    assert_output_contains "existing 2.5h"
+    assert_output_contains "#100"
+    # Running session skipped with the same message as the real path.
+    assert_output_contains "#200: skipped (still running"
+    # Summary line uses dry-run language.
+    assert_output_contains "Would commit"
+    assert_output_contains "no changes were sent"
+
+    [[ "${patch_called}" == false ]] || { echo "PATCH should not have fired in dry-run"; return 1; }
+    [[ "${archive_called}" == false ]] || { echo "session_mark_committed should not have fired"; return 1; }
+}
+
+@test "cmd_commit --dry-run: leaves session files in place (not archived)" {
+    require_binary jq
+    require_binary bc
+    twk_write_fake_config
+
+    local now hour_ago
+    now="$(date +%s)"
+    hour_ago=$(( now - 3600 ))
+    mkdir -p "${TWK_DATA_DIR}"
+    {
+        echo "start|${hour_ago}"
+        echo "end|${now}"
+    } > "${TWK_DATA_DIR}/100.session"
+
+    azdo_resolve_time_field() { echo "Custom.TaskTime"; }
+    azdo_fetch_work_item() { printf '%s' '{"id":100,"fields":{"Custom.TaskTime":0}}'; }
+
+    run cmd_commit --dry-run
+    assert_status 0
+
+    [[ -f "${TWK_DATA_DIR}/100.session" ]] || { echo "session file should remain"; return 1; }
+    [[ ! -d "${TWK_DATA_DIR}/committed" ]] || {
+        local archived
+        archived="$(ls "${TWK_DATA_DIR}/committed" 2>/dev/null)"
+        [[ -z "${archived}" ]] || { echo "committed/ unexpectedly populated: ${archived}"; return 1; }
+    }
+}
+
+@test "cmd_commit --dry-run: reports the right hours total in the summary" {
+    require_binary jq
+    require_binary bc
+    twk_write_fake_config
+
+    local now two_hours_ago
+    now="$(date +%s)"
+    two_hours_ago=$(( now - 7200 ))
+    mkdir -p "${TWK_DATA_DIR}"
+    {
+        echo "start|${two_hours_ago}"
+        echo "end|${now}"
+    } > "${TWK_DATA_DIR}/100.session"
+
+    azdo_resolve_time_field() { echo "Custom.TaskTime"; }
+    azdo_fetch_work_item() { printf '%s' '{"id":100,"fields":{"Custom.TaskTime":1.0}}'; }
+
+    run cmd_commit --dry-run
+    assert_status 0
+    # 2h tracked + 1h existing = 3.00h total. Dry-run "would commit" reports tracked hours.
+    assert_output_contains "would commit 2.00h"
+    assert_output_contains "existing 1.0h"
+    assert_output_contains "total 3.00h"
+    # Summary shows 2h to be committed across 1 session.
+    assert_output_contains "Would commit 2.00h across 1 session"
+}
+
+@test "cmd_commit --dry-run: 'no entries' early return is unchanged" {
+    twk_write_fake_config
+
+    run cmd_commit --dry-run
+    assert_status 0
+    assert_output_contains "No uncommitted time entries to commit."
+}
+
 @test "cmd_status: rejects unknown arguments with usage hint" {
     twk_write_fake_config
     config_global_file() { printf '%s\n' "${TWK_CONFIG_DIR}/config"; }

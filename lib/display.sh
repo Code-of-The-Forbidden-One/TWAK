@@ -795,6 +795,19 @@ cmd_status() {
 cmd_commit() {
     config_require
 
+    local dry_run=false
+    local arg
+    for arg in "$@"; do
+        case "${arg}" in
+            --dry-run) dry_run=true ;;
+            *)
+                echo "Error: unknown argument '${arg}' for commit." >&2
+                echo "Usage: twk commit [--dry-run]" >&2
+                return 1
+                ;;
+        esac
+    done
+
     local session_files
     session_files="$(session_list_uncommitted)"
 
@@ -803,11 +816,16 @@ cmd_commit() {
         return
     fi
 
-    echo "Committing time entries to Azure DevOps..."
+    if [[ "${dry_run}" == true ]]; then
+        echo "DRY RUN — no changes will be sent to Azure DevOps."
+    else
+        echo "Committing time entries to Azure DevOps..."
+    fi
     echo ""
 
     local success_count=0
     local failure_count=0
+    local would_hours_total=0
     local work_item_id current_state elapsed_seconds new_hours
     local existing_work_item existing_hours total_hours time_field
 
@@ -835,16 +853,27 @@ cmd_commit() {
 
         total_hours="$(echo "scale=2; ${existing_hours} + ${new_hours}" | bc)"
 
-        if azdo_update_time_spent "${work_item_id}" "${total_hours}" "${time_field}" > /dev/null 2>&1; then
-            session_mark_committed "${work_item_id}"
-            echo "  #${work_item_id}: committed ${new_hours}h (total: ${total_hours}h)"
+        if [[ "${dry_run}" == true ]]; then
+            echo "  #${work_item_id}: would commit ${new_hours}h (existing ${existing_hours}h → total ${total_hours}h)"
             success_count=$(( success_count + 1 ))
+            would_hours_total="$(echo "scale=2; ${would_hours_total} + ${new_hours}" | bc)"
         else
-            echo "  #${work_item_id}: failed to update Azure DevOps" >&2
-            failure_count=$(( failure_count + 1 ))
+            if azdo_update_time_spent "${work_item_id}" "${total_hours}" "${time_field}" > /dev/null 2>&1; then
+                session_mark_committed "${work_item_id}"
+                echo "  #${work_item_id}: committed ${new_hours}h (total: ${total_hours}h)"
+                success_count=$(( success_count + 1 ))
+            else
+                echo "  #${work_item_id}: failed to update Azure DevOps" >&2
+                failure_count=$(( failure_count + 1 ))
+            fi
         fi
     done <<< "${session_files}"
 
     echo ""
-    echo "Done: ${success_count} committed, ${failure_count} failed/skipped."
+    if [[ "${dry_run}" == true ]]; then
+        echo "Would commit ${would_hours_total}h across ${success_count} session$( (( success_count != 1 )) && echo s ), skipping ${failure_count}."
+        echo "(no changes were sent to Azure DevOps; sessions remain uncommitted)"
+    else
+        echo "Done: ${success_count} committed, ${failure_count} failed/skipped."
+    fi
 }

@@ -57,6 +57,7 @@ Options:
     --me                 (assign only) Assign yourself based on the PAT's identity
     --all                (assign, users) Use org-wide user list (Graph API; needs PAT scope)
     --discussion         (show only) Append the AzDO Discussion thread (comments)
+    --dry-run            (commit only) Preview what would be pushed without writing
 
 Note: --state X on any time-tracking command also fires an immediate PATCH to AzDO.
 

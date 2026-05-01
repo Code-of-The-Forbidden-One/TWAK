@@ -183,7 +183,17 @@ HELP
 twk list - List current sprint items with metadata
 
 Usage:
-    twk list
+    twk list [-i|--interactive]
+
+Options:
+    -i, --interactive   Open the list in fzf with a preview pane
+                        showing the full description and metadata
+                        for whichever row is highlighted. On enter,
+                        the selected work item ID is printed to
+                        stdout (so you can pipe it: e.g.
+                        'twk start "$(twk list -i)"'). Esc/Ctrl-C
+                        exits without selecting. Requires fzf on
+                        PATH.
 
 Prints every work item in the current sprint as a single-row
 table summary plus a description sub-line indented underneath:
@@ -204,6 +214,41 @@ Missing values render as '-'. The "Done" value comes from the
 AzDO time field configured in 'twk init' (Task vs Feature is
 resolved per item). The "Assigned" column is read from
 System.AssignedTo.displayName.
+
+Long output is automatically piped through 'less -FRX' when
+stdout is a TTY (set TWK_NO_PAGER=1 to opt out, or PAGER='' to
+force cat). Short output skips the pager because of less's -F
+flag. Falls back to cat if less isn't installed.
+HELP
+            ;;
+        show)
+            cat <<'HELP'
+twk show - Show one work item's full metadata and description
+
+Usage:
+    twk show [task]
+
+Arguments:
+    [task]   Work item ID, partial title, or omit for the
+             current-sprint interactive picker
+
+Fetches the work item from Azure DevOps and prints a single
+labelled block with type, state, priority, assignee, estimate,
+time taken, iteration path, and the full description (HTML-
+stripped, whitespace-collapsed, line-wrapped to 78 chars - no
+truncation).
+
+Use this when 'twk list' truncates the description and you
+need to read the whole thing without leaving the terminal.
+
+Output is piped through 'less -FRX' when stdout is a TTY (set
+TWK_NO_PAGER=1 to opt out, or PAGER='' to disable; respects an
+explicit $PAGER). Falls back to cat if less isn't installed.
+
+Examples:
+    twk show 12345               Look up by ID
+    twk show "login bug"         Title-search the current sprint
+    twk show                     Pick interactively
 HELP
             ;;
         pull)
@@ -264,6 +309,11 @@ batch endpoint to read the current time field on every uncommitted
 work item, then renders two extra columns showing the projected
 post-commit value. Cells display '?' if the lookup fails (network
 down, work item deleted, etc.); the command does not fail.
+
+The table portion is piped through 'less -FRX' when stdout is a
+TTY (set TWK_NO_PAGER=1 to opt out, or PAGER='' to disable;
+respects an explicit $PAGER). Falls back to cat if less isn't
+installed. The 'Config:' line above the table prints unpaged.
 HELP
             ;;
         commit)

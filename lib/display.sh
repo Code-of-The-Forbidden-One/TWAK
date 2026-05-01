@@ -58,8 +58,47 @@ readonly LIST_ASSIGNED_WIDTH=15
 readonly LIST_DESC_INDENT="           "
 readonly LIST_DESC_WRAP_WIDTH=78
 
+twk_pager_cmd() {
+    # Returns the pager command to invoke (printed to stdout). Empty
+    # output means "no pager — use cat passthrough." This is split from
+    # twk_pager so the decision logic is unit-testable without a TTY.
+    if [[ -n "${TWK_NO_PAGER:-}" ]]; then
+        return
+    fi
+    if [[ -n "${PAGER+x}" ]]; then
+        # PAGER explicitly set (possibly to empty). Honour it verbatim.
+        printf '%s' "${PAGER}"
+        return
+    fi
+    # Default: less with -F (no-page when output fits one screen),
+    # -R (raw control codes), -X (keep output visible after quit).
+    # Fall through to cat if less isn't installed (minimal containers).
+    if command -v less &> /dev/null; then
+        printf 'less -FRX'
+    fi
+}
+
+twk_pager() {
+    # Page only when stdout is a TTY. Piped/redirected output passes through.
+    if [[ ! -t 1 ]]; then
+        cat
+        return
+    fi
+    local pager
+    pager="$(twk_pager_cmd)"
+    if [[ -z "${pager}" ]]; then
+        cat
+    else
+        # shellcheck disable=SC2086  # intentional word-splitting on pager command
+        ${pager}
+    fi
+}
+
 normalise_description() {
     local html="$1"
+    # Optional max-length. 0 disables truncation (used by `twk show`).
+    local max_len="${2:-${LIST_DESC_TRUNCATE}}"
+
     if [[ -z "${html}" ]]; then
         echo "(no description)"
         return
@@ -79,17 +118,17 @@ normalise_description() {
         echo "(no description)"
         return
     fi
-    if (( ${#plain} > LIST_DESC_TRUNCATE )); then
-        printf '%s...' "${plain:0:LIST_DESC_TRUNCATE}"
+    if (( max_len > 0 && ${#plain} > max_len )); then
+        printf '%s...' "${plain:0:max_len}"
     else
         printf '%s' "${plain}"
     fi
 }
 
-render_list_item() {
+render_list_row() {
     local item_json="$1"
 
-    local id title type state priority est done assigned description
+    local id title type state priority est done assigned
     id="$(echo "${item_json}"          | jq -r '.id')"
     title="$(echo "${item_json}"       | jq -r '.fields["System.Title"] // ""')"
     type="$(echo "${item_json}"        | jq -r '.fields["System.WorkItemType"] // ""')"
@@ -111,8 +150,6 @@ render_list_item() {
     # string form (older API versions) so it falls through to "-".
     assigned="$(echo "${item_json}" | jq -r '.fields["System.AssignedTo"].displayName? // "-"')"
 
-    description="$(normalise_description "$(echo "${item_json}" | jq -r '.fields["System.Description"] // ""')")"
-
     printf "  #%-7s %-${LIST_TITLE_WIDTH}s %-10s %-4s %-8s %-8s %s\n" \
         "${id}" \
         "$(truncate_title "${title}" "${LIST_TITLE_WIDTH}")" \
@@ -121,20 +158,78 @@ render_list_item() {
         "${est}" \
         "${done}" \
         "$(truncate_title "${assigned}" "${LIST_ASSIGNED_WIDTH}")"
+}
 
+render_list_item() {
+    local item_json="$1"
+
+    render_list_row "${item_json}"
+
+    local description
+    description="$(normalise_description "$(echo "${item_json}" | jq -r '.fields["System.Description"] // ""')")"
     printf '%s' "${description}" \
         | fold -s -w "${LIST_DESC_WRAP_WIDTH}" \
         | awk -v ind="${LIST_DESC_INDENT}" '{ print ind $0 }'
 }
 
+cmd_list_interactive() {
+    local batch_response="$1"
+    local iteration_name="$2"
+
+    if ! command -v fzf &> /dev/null; then
+        echo "Error: 'twk list -i' requires fzf. Install fzf or use 'twk list' for static output." >&2
+        return 1
+    fi
+
+    local preview_dir
+    preview_dir="$(mktemp -d -t twk-list-XXXXXX)" || {
+        echo "Error: failed to create temp dir for preview." >&2
+        return 1
+    }
+    # shellcheck disable=SC2064  # expand preview_dir at trap-set time
+    trap "rm -rf '${preview_dir}'" RETURN
+
+    local fzf_input=""
+    local item id row
+    while IFS= read -r item; do
+        id="$(echo "${item}" | jq -r '.id')"
+        render_show_item "${item}" > "${preview_dir}/${id}.preview"
+        row="$(render_list_row "${item}")"
+        fzf_input+="${id}"$'\t'"${row}"$'\n'
+    done < <(echo "${batch_response}" | jq -c '.value[]')
+
+    local header="Sprint: ${iteration_name}  ·  enter=select  esc=cancel  ctrl-/=preview off"
+    local selected
+    selected="$(printf '%s' "${fzf_input}" \
+        | fzf --header="${header}" \
+              --delimiter=$'\t' \
+              --with-nth=2 \
+              --preview="cat '${preview_dir}/'{1}.preview" \
+              --preview-window=right:55%:wrap \
+              --bind='ctrl-/:toggle-preview' \
+              --reverse \
+              --height=95%)" || return 0
+
+    [[ -n "${selected}" ]] || return 0
+
+    printf '%s\n' "${selected}" | cut -f1
+}
+
 cmd_list() {
     config_require
 
-    if [[ $# -gt 0 ]]; then
-        echo "Error: 'twk list' takes no arguments." >&2
-        echo "Usage: twk list" >&2
-        return 1
-    fi
+    local interactive=false
+    local arg
+    for arg in "$@"; do
+        case "${arg}" in
+            -i|--interactive) interactive=true ;;
+            *)
+                echo "Error: unknown argument '${arg}' for list." >&2
+                echo "Usage: twk list [-i|--interactive]" >&2
+                return 1
+                ;;
+        esac
+    done
 
     local iteration_response
     iteration_response="$(azdo_fetch_current_iteration)" || {
@@ -172,26 +267,97 @@ cmd_list() {
         return 1
     }
 
+    if [[ "${interactive}" == true ]]; then
+        cmd_list_interactive "${batch_response}" "${iteration_name}"
+        return
+    fi
+
     local count
     count="$(echo "${batch_response}" | jq '.value | length')"
 
     local rule
     rule="$(printf '─%.0s' $(seq 1 95))"
 
-    echo "Current sprint${iteration_name:+: }${iteration_name}"
+    {
+        echo "Current sprint${iteration_name:+: }${iteration_name}"
+        echo ""
+        echo "${rule}"
+        printf "  %-8s %-${LIST_TITLE_WIDTH}s %-10s %-4s %-8s %-8s %s\n" \
+            "ID" "Title" "State" "Pri" "Est" "Done" "Assigned"
+        echo "${rule}"
+
+        local item
+        while IFS= read -r item; do
+            render_list_item "${item}"
+        done < <(echo "${batch_response}" | jq -c '.value[]')
+
+        echo "${rule}"
+        echo "(${count} item$( (( count != 1 )) && echo s ) in sprint)"
+    } | twk_pager
+}
+
+render_show_item() {
+    local item_json="$1"
+
+    local id title type state priority est done assigned iteration description
+    id="$(echo "${item_json}"          | jq -r '.id')"
+    title="$(echo "${item_json}"       | jq -r '.fields["System.Title"] // ""')"
+    type="$(echo "${item_json}"        | jq -r '.fields["System.WorkItemType"] // ""')"
+    state="$(echo "${item_json}"       | jq -r '.fields["System.State"] // ""')"
+    priority="$(echo "${item_json}"    | jq -r '.fields["Microsoft.VSTS.Common.Priority"] // "-"')"
+
+    est="$(echo "${item_json}"         | jq -r '.fields["Microsoft.VSTS.Scheduling.OriginalEstimate"] // empty')"
+    [[ -z "${est}" ]] && est="-" || est="${est}h"
+
+    local time_field
+    case "${type}" in
+        Feature) time_field="${TWK_TIME_FIELD_FEATURE}" ;;
+        *)       time_field="${TWK_TIME_FIELD_TASK}" ;;
+    esac
+    done="$(echo "${item_json}" | jq -r --arg f "${time_field}" '.fields[$f] // empty')"
+    [[ -z "${done}" ]] && done="-" || done="${done}h"
+
+    assigned="$(echo "${item_json}"  | jq -r '.fields["System.AssignedTo"].displayName? // "-"')"
+    iteration="$(echo "${item_json}" | jq -r '.fields["System.IterationPath"] // "-"')"
+
+    description="$(normalise_description \
+        "$(echo "${item_json}" | jq -r '.fields["System.Description"] // ""')" \
+        0)"
+
+    local rule
+    rule="$(printf '─%.0s' $(seq 1 78))"
+
+    echo "${rule}"
+    echo "#${id} - ${title}"
+    echo "${rule}"
+    printf "  Type:       %s\n" "${type:--}"
+    printf "  State:      %s\n" "${state:--}"
+    printf "  Priority:   %s\n" "${priority}"
+    printf "  Assigned:   %s\n" "${assigned}"
+    printf "  Estimate:   %s\n" "${est}"
+    printf "  Done:       %s\n" "${done}"
+    printf "  Iteration:  %s\n" "${iteration}"
     echo ""
-    echo "${rule}"
-    printf "  %-8s %-${LIST_TITLE_WIDTH}s %-10s %-4s %-8s %-8s %s\n" \
-        "ID" "Title" "State" "Pri" "Est" "Done" "Assigned"
-    echo "${rule}"
+    echo "Description:"
+    printf '%s\n' "${description}" | fold -s -w 78
+}
 
-    local item
-    while IFS= read -r item; do
-        render_list_item "${item}"
-    done < <(echo "${batch_response}" | jq -c '.value[]')
+cmd_show() {
+    config_require
 
-    echo "${rule}"
-    echo "(${count} item$( (( count != 1 )) && echo s ) in sprint)"
+    local query
+    query="$(parse_query_arg "$@")"
+
+    local work_item_id
+    work_item_id="$(resolve_work_item "${query}")" || return 1
+
+    local item_json
+    item_json="$(azdo_fetch_work_item "${work_item_id}")" || {
+        echo "Error: failed to fetch work item #${work_item_id}." >&2
+        return 1
+    }
+
+    render_show_item "${item_json}" | twk_pager
 }
 
 cmd_status() {
@@ -237,6 +403,7 @@ cmd_status() {
     local rule
     rule="$(printf '─%.0s' $(seq 1 "${rule_width}"))"
 
+    {
     echo ""
     echo "Uncommitted time entries:"
     echo "${rule}"
@@ -311,6 +478,7 @@ cmd_status() {
             "$(format_duration "${total_seconds}")" \
             "$(seconds_to_hours "${total_seconds}")"
     fi
+    } | twk_pager
 }
 
 cmd_commit() {

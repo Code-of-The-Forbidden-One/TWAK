@@ -77,6 +77,7 @@ _run_dispatch() {
         cmd_undo()    { printf "undo\t%s\n"    "$*" >> "$CALL_LOG"; }
         cmd_cancel()  { printf "cancel\t%s\n"  "$*" >> "$CALL_LOG"; }
         cmd_list()    { printf "list\t%s\n"    "$*" >> "$CALL_LOG"; }
+        cmd_show()    { printf "show\t%s\n"    "$*" >> "$CALL_LOG"; }
         cmd_pull()    { printf "pull\t%s\n"    "$*" >> "$CALL_LOG"; }
         cmd_status()  { printf "status\t%s\n"  "$*" >> "$CALL_LOG"; }
         cmd_commit()  { printf "commit\t%s\n"  "$*" >> "$CALL_LOG"; }
@@ -135,6 +136,11 @@ _first_call() {
 @test "dispatch: 'twk pull' → cmd_pull" {
     run _run_dispatch pull
     [[ "$(_first_call)" == $'pull\t' ]]
+}
+
+@test "dispatch: 'twk show 12345' → cmd_show 12345" {
+    run _run_dispatch show 12345
+    [[ "$(_first_call)" == $'show\t12345' ]]
 }
 
 @test "dispatch: 'twk status' → cmd_status" {

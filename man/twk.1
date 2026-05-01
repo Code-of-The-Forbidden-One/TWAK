@@ -112,7 +112,7 @@ When
 is omitted, the interactive picker only lists existing sessions; a
 single match is selected automatically.
 .TP
-.B list
+.B list \fR[\fB\-i\fR | \fB\-\-interactive\fR]
 List every work item in the current sprint as a single-row table
 summary (columns: ID, Title, State, Pri, Est, Done, Assigned) with
 the work item's description rendered as an indented sub-line beneath
@@ -131,6 +131,48 @@ The "Done" column comes from the AzDO time field configured in
 and is resolved per item type (Task vs Feature). The "Assigned"
 column is read from
 .IR System.AssignedTo.displayName .
+.IP
+With
+.B \-i
+or
+.BR \-\-interactive ,
+the list opens in fzf with a preview pane showing the full
+description and metadata for whichever row is highlighted. On
+enter, the selected work item ID is printed to stdout. Requires
+fzf.
+.IP
+Output is piped through
+.B "less -FRX"
+when stdout is a TTY (set
+.I TWK_NO_PAGER=1
+to opt out, or
+.I "PAGER=''"
+to disable; respects an explicit
+.IR $PAGER ).
+.B less \-F
+skips paging when output fits on one screen, so short lists are
+unchanged. If
+.B less
+is not installed, output falls through to
+.BR cat .
+The same pager wrapping applies to
+.B "twk show"
+and
+.BR "twk status" .
+.TP
+.B show \fR[\fItask\fR]
+Print one work item's full metadata and description as a single
+labelled block: type, state, priority, assignee, estimate, time
+taken, iteration path, and the full description (HTML-stripped,
+whitespace-collapsed, line-wrapped to 78 characters - no
+truncation). Use when
+.B "twk list"
+has truncated a description and you need to read it in full.
+The
+.I task
+argument supports the same resolution modes as the session
+commands (numeric ID, title search, or omitted for the
+interactive picker).
 .TP
 .B pull
 For every uncommitted session, re-fetch the work item's title and
@@ -271,9 +313,30 @@ Archived sessions that have been committed to Azure DevOps.
 Archived sessions that were discarded with
 .BR "twk cancel" .
 .SH ENVIRONMENT
-.B twk
-does not read any environment variables. All configuration is stored
-in the config file.
+.TP
+.B TWK_NO_PAGER
+When set (any non-empty value), disables the auto-pager for
+.BR list ,
+.BR show ,
+and
+.BR status .
+.TP
+.B PAGER
+The pager used for long output from
+.BR list ,
+.BR show ,
+and
+.BR status .
+Defaults to
+.I "less -FRX"
+when unset, or
+.B cat
+if
+.B less
+isn't installed. An empty value disables paging entirely.
+.PP
+All Azure DevOps configuration is stored in the config file
+.RI ( "twk init" ).
 .SH DEPENDENCIES
 .B curl
 (API requests),

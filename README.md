@@ -295,7 +295,7 @@ Cancelled #48215 (00:45:30 discarded)
 
 ---
 
-### `twk list`
+### `twk list [-i|--interactive]`
 
 Lists every work item in the current sprint with its full metadata. Useful for sprint overviews — what's there, what's been estimated, what's been done so far, and what each item is about — without leaving the terminal.
 
@@ -328,6 +328,52 @@ Notes:
 - **Description** is HTML-stripped, whitespace-collapsed, and truncated to 240 characters with `...`. For the full description, click through to AzDO.
 - **Missing values** (no priority, no estimate, no time logged) render as `-`.
 - The command hits AzDO directly — no offline mode. If the iteration or batch fetch fails, it prints a clear error and exits non-zero.
+- Long output auto-pages through `less -FRX` when stdout is a TTY. Short output (less than one screen) skips the pager because of less's `-F` flag. Set `TWK_NO_PAGER=1` to opt out, or `PAGER=''` to disable globally.
+
+**Interactive mode (`-i`).** With fzf installed, `twk list -i` opens the same data in a fzf-driven view: scroll, fuzzy-search, and see the full description in a preview pane on the right for whichever row is highlighted. On enter, the selected work item ID is printed to stdout — pipeable into other commands:
+
+```bash
+twk start "$(twk list -i)"      # pick interactively, then start tracking
+twk show "$(twk list -i)"        # pick interactively, then read full details
+```
+
+`Esc`/`Ctrl-C` exits without selection. `Ctrl-/` toggles the preview pane.
+
+---
+
+### `twk show [task]`
+
+Prints one work item's full metadata and description in a single labelled block. Use this when `twk list` has truncated a description and you want to read the whole thing without leaving the terminal.
+
+The `task` argument supports the usual resolution modes: numeric ID, partial title (case-insensitive search against the current sprint), or omit for the interactive picker.
+
+```
+$ twk show 48210
+──────────────────────────────────────────────────────────────────────────────
+#48210 - Implement login button
+──────────────────────────────────────────────────────────────────────────────
+  Type:       Task
+  State:      Active
+  Priority:   2
+  Assigned:   Luke McCann
+  Estimate:   8h
+  Done:       2.5h
+  Iteration:  Platform\Sprint 23
+
+Description:
+OAuth2 implementation with PKCE flow. Needs to handle redirects from the
+legacy callback URLs and preserve session state across the rewrite. We need
+to ensure backward compatibility with the existing token format while
+migrating to the new key set during a single deploy window.
+```
+
+Notes:
+
+- **Read-only** — no `--state` flag, no session changes, no PATCHes. Pure fetch.
+- **Description** is HTML-stripped, whitespace-collapsed, and **not truncated**. Long descriptions wrap at 78 columns.
+- **Missing fields** render as `-`.
+- Hits AzDO directly on each invocation — no offline mode.
+- Long output auto-pages through `less -FRX`. Same opt-out (`TWK_NO_PAGER=1` or `PAGER=''`) as `twk list`.
 
 ---
 
@@ -396,6 +442,10 @@ Uncommitted time entries:
 
 ---
 
+Like `twk list` and `twk show`, the table portion auto-pages through `less -FRX` when output exceeds one screen and stdout is a TTY. The "Config:" line above the table prints unpaged.
+
+---
+
 ### `twk commit`
 
 Pushes all uncommitted time entries to Azure DevOps by updating the configured time field on each work item.
@@ -444,6 +494,7 @@ Usage:
     twk undo             Undo the last event on a session
     twk cancel           Discard an uncommitted session
     twk list             List current sprint items with metadata
+    twk show             Show one work item's full metadata + description
     twk pull             Refresh cached title/type for all sessions
     twk status           View uncommitted time entries
     twk commit           Push time entries to Azure DevOps
@@ -451,12 +502,18 @@ Usage:
 
 Arguments:
     [task]               Work item ID, partial title, or omit for interactive picker
-                         (start, pause, end, done, undo, cancel)
+                         (start, pause, end, done, undo, cancel, show)
 
 Options:
     --global             (init only) Write to the global config rather than project-local
     --state <state>      (start, pause, end, done, undo, cancel) Set AzDO work item state
     --with-existing      (status only) Show post-commit projection (existing AzDO + tracked)
+    -i, --interactive    (list only) Open in fzf with preview pane; prints selected ID
+
+Environment:
+    TWK_NO_PAGER         Disable the auto-pager for list / show / status.
+    PAGER                Pager to use for long output (default: less -FRX,
+                         or cat if less is missing). Empty disables paging.
 ```
 
 Pass `--help` (or `-h`) to any subcommand for detailed help on that command (e.g. `twk start --help`).

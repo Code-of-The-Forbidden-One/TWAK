@@ -25,6 +25,7 @@ Usage:
     twk undo             Undo the last event on a session
     twk cancel           Discard an uncommitted session
     twk list             List current sprint items with metadata
+    twk show             Show one work item's full metadata + description
     twk pull             Refresh cached title/type for all sessions
     twk status           View uncommitted time entries
     twk commit           Push time entries to Azure DevOps
@@ -32,14 +33,20 @@ Usage:
 
 Arguments:
     [task]               Work item ID, partial title, or omit for interactive picker
-                         (start, pause, end, done, undo, cancel)
+                         (start, pause, end, done, undo, cancel, show)
 
 Options:
     --global             (init only) Write to the global config rather than project-local
     --state <state>      (start, pause, end, done, undo, cancel) Set AzDO work item state
     --with-existing      (status only) Show post-commit projection (existing AzDO + tracked)
+    -i, --interactive    (list only) Open in fzf with preview pane; prints selected ID
 
 Pass --help (or -h) to any subcommand for full per-command help.
+
+Environment:
+    TWK_NO_PAGER         Disable the auto-pager for list / show / status.
+    PAGER                Pager to use for long output (default: less -FRX,
+                         or cat if less is missing). Empty disables paging.
 USAGE
 }
 
@@ -61,6 +68,7 @@ main() {
         undo)    cmd_undo "$@" ;;
         cancel)  cmd_cancel "$@" ;;
         list)    cmd_list "$@" ;;
+        show)    cmd_show "$@" ;;
         pull)    cmd_pull "$@" ;;
         status)  cmd_status "$@" ;;
         commit)  cmd_commit "$@" ;;

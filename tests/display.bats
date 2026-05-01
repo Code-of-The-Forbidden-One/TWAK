@@ -227,6 +227,24 @@ setup() {
     [[ "${output}" == *"..." ]] || { echo "no ... suffix"; return 1; }
 }
 
+@test "normalise_description: max_len 0 disables truncation" {
+    local long
+    long="$(printf 'a%.0s' $(seq 1 500))"
+    run normalise_description "${long}" 0
+    assert_status 0
+    [[ "${#output}" -eq 500 ]] || { echo "len=${#output}"; return 1; }
+    [[ "${output}" != *"..." ]] || { echo "should not have truncation suffix"; return 1; }
+}
+
+@test "normalise_description: explicit max_len takes precedence over default" {
+    local long
+    long="$(printf 'a%.0s' $(seq 1 200))"
+    run normalise_description "${long}" 50
+    assert_status 0
+    # 50 chars + '...'
+    [[ "${#output}" -eq 53 ]] || { echo "len=${#output}"; return 1; }
+}
+
 @test "render_list_item: summary row has ID, title, state, priority, est, done, assigned" {
     require_binary jq
 
@@ -506,6 +524,230 @@ setup() {
     assert_status 0
     assert_output_contains "(1 item in sprint)"
     [[ "${output}" != *"items in sprint"* ]] || { echo "should be singular; got: ${output}"; return 1; }
+}
+
+@test "twk_pager: passes through stdin to stdout when stdout is not a tty" {
+    # In bats, run captures via pipe, so [[ -t 1 ]] is false → cat path.
+    run bash -c 'source /home/lukemccann/Projects/TWAK/lib/display.sh; printf "hello\nworld\n" | twk_pager'
+    assert_status 0
+    [[ "${output}" == "hello"$'\n'"world" ]] || { echo "got: ${output}"; return 1; }
+}
+
+@test "twk_pager_cmd: returns 'less -FRX' when less is on PATH and PAGER unset" {
+    unset PAGER TWK_NO_PAGER
+    if ! command -v less &> /dev/null; then
+        skip "less not installed in this environment"
+    fi
+    run twk_pager_cmd
+    assert_status 0
+    [[ "${output}" == "less -FRX" ]] || { echo "got: ${output}"; return 1; }
+}
+
+@test "twk_pager_cmd: returns empty when less is missing and PAGER unset" {
+    unset PAGER TWK_NO_PAGER
+    # Override `command` to make less appear absent.
+    command() {
+        if [[ "${1:-}" == "-v" ]] && [[ "${2:-}" == "less" ]]; then
+            return 1
+        fi
+        builtin command "$@"
+    }
+    run twk_pager_cmd
+    assert_status 0
+    [[ -z "${output}" ]] || { echo "expected empty (cat fallback), got: ${output}"; return 1; }
+}
+
+@test "twk_pager_cmd: returns the user's PAGER value verbatim" {
+    PAGER="more" run twk_pager_cmd
+    assert_status 0
+    [[ "${output}" == "more" ]] || { echo "got: ${output}"; return 1; }
+}
+
+@test "twk_pager_cmd: empty PAGER stays empty (explicit no-pager)" {
+    PAGER="" run twk_pager_cmd
+    assert_status 0
+    [[ -z "${output}" ]] || { echo "got: ${output}"; return 1; }
+}
+
+@test "twk_pager_cmd: TWK_NO_PAGER returns empty regardless of PAGER" {
+    PAGER="less" TWK_NO_PAGER=1 run twk_pager_cmd
+    assert_status 0
+    [[ -z "${output}" ]] || { echo "got: ${output}"; return 1; }
+}
+
+@test "cmd_list -i: errors when fzf is not on PATH" {
+    require_binary jq
+    twk_write_fake_config
+    config_global_file() { printf '%s\n' "${TWK_CONFIG_DIR}/config"; }
+    config_find_local() { return 1; }
+
+    azdo_fetch_current_iteration() {
+        printf '%s' '{"value":[{"id":"iter-1","name":"Sprint 23"}]}'
+    }
+    azdo_fetch_iteration_work_items() {
+        printf '%s' '{"workItemRelations":[{"target":{"id":1}}]}'
+    }
+    azdo_fetch_sprint_with_details() {
+        printf '%s' '{"value":[{"id":1,"fields":{"System.Title":"Solo","System.WorkItemType":"Task","System.State":"New"}}]}'
+    }
+
+    # twk_hide_fzf is already active via twk_setup_env, so command -v fzf
+    # returns non-zero. The interactive path should detect this and error.
+    run cmd_list -i
+    assert_status 1
+    assert_output_contains "requires fzf"
+}
+
+@test "cmd_list: rejects unknown arguments" {
+    twk_write_fake_config
+    config_global_file() { printf '%s\n' "${TWK_CONFIG_DIR}/config"; }
+    config_find_local() { return 1; }
+
+    run cmd_list --bogus
+    assert_status 1
+    assert_output_contains "unknown argument"
+    assert_output_contains "Usage: twk list"
+}
+
+@test "render_list_row: emits the summary row only (no description sub-line)" {
+    require_binary jq
+
+    export TWK_TIME_FIELD_TASK="Custom.TaskTime"
+    export TWK_TIME_FIELD_FEATURE="Custom.FeatureTime"
+
+    local item='{"id":80,"fields":{
+        "System.Title":"Row only",
+        "System.WorkItemType":"Task",
+        "System.State":"Active",
+        "System.Description":"Should not appear"
+    }}'
+
+    run render_list_row "${item}"
+    assert_status 0
+    assert_output_contains "#80"
+    assert_output_contains "Row only"
+    [[ "${output}" != *"Should not appear"* ]] || { echo "row leaked description: ${output}"; return 1; }
+    # Single line of output (no description sub-line).
+    local line_count
+    line_count="$(printf '%s\n' "${output}" | wc -l)"
+    [[ "${line_count}" -eq 1 ]] || { echo "got ${line_count} lines"; return 1; }
+}
+
+@test "render_show_item: prints labelled block with all fields" {
+    require_binary jq
+
+    export TWK_TIME_FIELD_TASK="Custom.TaskTime"
+    export TWK_TIME_FIELD_FEATURE="Custom.FeatureTime"
+
+    local item='{"id":48210,"fields":{
+        "System.Title":"Implement login button",
+        "System.WorkItemType":"Task",
+        "System.State":"Active",
+        "System.Description":"<p>OAuth2 with PKCE flow.</p>",
+        "System.AssignedTo":{"displayName":"Luke McCann"},
+        "System.IterationPath":"Platform\\Sprint 23",
+        "Microsoft.VSTS.Common.Priority":2,
+        "Microsoft.VSTS.Scheduling.OriginalEstimate":8,
+        "Custom.TaskTime":2.5
+    }}'
+
+    run render_show_item "${item}"
+    assert_status 0
+    assert_output_contains "#48210"
+    assert_output_contains "Implement login button"
+    assert_output_contains "Type:       Task"
+    assert_output_contains "State:      Active"
+    assert_output_contains "Priority:   2"
+    assert_output_contains "Assigned:   Luke McCann"
+    assert_output_contains "Estimate:   8h"
+    assert_output_contains "Done:       2.5h"
+    assert_output_contains "Iteration:"
+    assert_output_contains "Sprint 23"
+    assert_output_contains "Description:"
+    assert_output_contains "OAuth2 with PKCE flow."
+}
+
+@test "render_show_item: missing fields render as '-' or '(no description)'" {
+    require_binary jq
+
+    export TWK_TIME_FIELD_TASK="Custom.TaskTime"
+    export TWK_TIME_FIELD_FEATURE="Custom.FeatureTime"
+
+    local item='{"id":99,"fields":{
+        "System.Title":"Sparse",
+        "System.WorkItemType":"Task",
+        "System.State":"New"
+    }}'
+
+    run render_show_item "${item}"
+    assert_status 0
+    assert_output_contains "Priority:   -"
+    assert_output_contains "Assigned:   -"
+    assert_output_contains "Estimate:   -"
+    assert_output_contains "Done:       -"
+    assert_output_contains "Iteration:  -"
+    assert_output_contains "(no description)"
+}
+
+@test "render_show_item: long description renders untruncated" {
+    require_binary jq
+
+    export TWK_TIME_FIELD_TASK="Custom.TaskTime"
+    export TWK_TIME_FIELD_FEATURE="Custom.FeatureTime"
+
+    local long
+    long="$(printf 'x%.0s' $(seq 1 600))"
+
+    local item
+    item="$(jq -nc --arg desc "${long}" '{
+        id: 1,
+        fields: {
+            "System.Title": "Long",
+            "System.WorkItemType": "Task",
+            "System.State": "Active",
+            "System.Description": $desc
+        }
+    }')"
+
+    run render_show_item "${item}"
+    assert_status 0
+    # No truncation marker should appear in the description.
+    [[ "${output}" != *"..."* ]] || { echo "unexpected truncation in show output"; return 1; }
+    # All 600 chars of x's are present (across wrapped lines).
+    local x_count
+    x_count="$(grep -o 'x' <<< "${output}" | wc -l)"
+    [[ "${x_count}" -eq 600 ]] || { echo "got ${x_count} x's"; return 1; }
+}
+
+@test "cmd_show: errors when work item fetch fails" {
+    twk_write_fake_config
+    config_global_file() { printf '%s\n' "${TWK_CONFIG_DIR}/config"; }
+    config_find_local() { return 1; }
+
+    azdo_fetch_work_item() { return 1; }
+
+    run cmd_show 12345
+    assert_status 1
+    assert_output_contains "failed to fetch work item #12345"
+}
+
+@test "cmd_show: routes a numeric ID through to render_show_item" {
+    require_binary jq
+    twk_write_fake_config
+    config_global_file() { printf '%s\n' "${TWK_CONFIG_DIR}/config"; }
+    config_find_local() { return 1; }
+
+    export TWK_TIME_FIELD_TASK="Custom.TaskTime"
+    export TWK_TIME_FIELD_FEATURE="Custom.FeatureTime"
+
+    azdo_fetch_work_item() {
+        printf '%s' '{"id":4242,"fields":{"System.Title":"Routed","System.WorkItemType":"Task","System.State":"Active"}}'
+    }
+
+    run cmd_show 4242
+    assert_status 0
+    assert_output_contains "#4242"
+    assert_output_contains "Routed"
 }
 
 @test "cmd_status: rejects unknown arguments with usage hint" {

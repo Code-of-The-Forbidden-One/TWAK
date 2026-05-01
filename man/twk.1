@@ -238,7 +238,15 @@ in the config file.
 .B bc
 (decimal hour calculations). Optional:
 .B fzf
-(interactive picker).
+(interactive picker),
+.B git
+(auto-appends
+.I .twk/
+to
+.I .gitignore
+on project-local
+.B "twk init"
+inside a git repo; otherwise twk prints a manual reminder).
 .SH EXAMPLES
 Track a single work item from start to finish:
 .PP
@@ -290,6 +298,14 @@ Success.
 .B 1
 Error (missing dependency, invalid arguments, API failure, or no
 active session).
+.TP
+.B 130
+Cancelled by the user via Ctrl+C. The trap on
+.B SIGINT
+prints
+.I "Cancelled."
+on stderr and exits cleanly so an interrupted picker or prompt
+doesn't surface as a stack trace.
 .SH BUGS
 Report bugs at https://github.com/Code-of-The-Forbidden-One/TWAK/issues
 .SH AUTHORS

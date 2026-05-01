@@ -1,0 +1,210 @@
+#!/usr/bin/env python3
+"""
+Minimal jq fallback for the TWAK test suite.
+
+This is NOT a full jq. It implements only the specific filters that
+lib/*.sh invokes, and is meant to be used in environments where the
+real `jq` binary isn't installed (CI containers, fresh Arch boxes
+without jq). When real jq is on PATH ahead of this stub, this is never
+called.
+
+Supported invocation patterns (mirrored from lib/azdo.sh, lib/resolve.sh,
+lib/session.sh, lib/display.sh):
+
+    jq -sRr @uri                                     # url_encode
+    jq -r '.title // ""' <file>                      # session_read_meta_title
+    jq -c '{ title: ..., type: ... }'                # azdo_fetch_work_item_meta
+    jq -r '.fields["System.WorkItemType"]'           # azdo_resolve_time_field
+    jq -r --arg field <name> '.fields[$field] // 0'  # cmd_commit
+    jq -r --arg term <term> '.value[] | select(...)' # resolve_by_title
+    jq -r '.value[] | "..."'                         # resolve_interactive
+    jq -r '.value[0].id'                             # fetch_current_sprint_items
+    jq '[.workItemRelations[].target.id] | unique'   # fetch_current_sprint_items
+
+Anything outside that whitelist exits with rc=2 and a clear error so it
+can't fail silently.
+"""
+from __future__ import annotations
+import json
+import re
+import sys
+import urllib.parse
+from typing import Any
+
+
+def die(msg: str, rc: int = 2) -> None:
+    print(f"jq-stub: {msg}", file=sys.stderr)
+    sys.exit(rc)
+
+
+def parse_args(argv: list[str]) -> tuple[dict, str, list[str]]:
+    """Returns (flags, filter, positional_files)."""
+    flags = {"raw_output": False, "compact": False, "slurp": False, "raw_input": False}
+    arg_vars: dict[str, str] = {}
+    positional: list[str] = []
+    filt: str | None = None
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "-r":
+            flags["raw_output"] = True
+        elif a == "-c":
+            flags["compact"] = True
+        elif a == "-s":
+            flags["slurp"] = True
+        elif a == "-R":
+            flags["raw_input"] = True
+        elif a == "-sRr" or a == "-Rrs" or a == "-rRs" or a == "-rsR" or a == "-Rsr" or a == "-sr R":
+            flags.update({"slurp": True, "raw_input": True, "raw_output": True})
+        elif a.startswith("-") and len(a) > 1 and not a.startswith("--") and a != "-":
+            # Combined short flags like -sRr.
+            for ch in a[1:]:
+                if ch == "r":
+                    flags["raw_output"] = True
+                elif ch == "R":
+                    flags["raw_input"] = True
+                elif ch == "s":
+                    flags["slurp"] = True
+                elif ch == "c":
+                    flags["compact"] = True
+                else:
+                    die(f"unsupported short flag '-{ch}'")
+        elif a == "--arg":
+            arg_vars[argv[i + 1]] = argv[i + 2]
+            i += 2
+        elif filt is None:
+            filt = a
+        else:
+            positional.append(a)
+        i += 1
+    if filt is None:
+        die("no filter")
+    flags["arg_vars"] = arg_vars
+    return flags, filt, positional
+
+
+def read_input(positional: list[str], slurp: bool, raw_input: bool) -> Any:
+    if positional:
+        text = open(positional[0], "r", encoding="utf-8").read()
+    else:
+        text = sys.stdin.read()
+    if raw_input and slurp:
+        # @uri is the only consumer — feed text whole.
+        return text
+    if raw_input:
+        return text
+    if slurp:
+        # Slurp without raw_input: parse all values into list. Not used in TWAK.
+        return [json.loads(text)] if text.strip() else []
+    if not text.strip():
+        return None
+    return json.loads(text)
+
+
+def emit(value: Any, raw: bool, compact: bool) -> None:
+    if value is None:
+        # `null` literal.
+        print("null")
+        return
+    if raw and isinstance(value, str):
+        print(value)
+        return
+    if compact:
+        print(json.dumps(value, separators=(",", ":")))
+    else:
+        print(json.dumps(value, indent=2))
+
+
+def run_filter(filt: str, value: Any, args: dict[str, str]) -> list[Any]:
+    """
+    Returns a list of output values (jq pipelines can produce many).
+    Each is emitted on its own line.
+    """
+    f = filt.strip()
+
+    if f == "@uri":
+        return [urllib.parse.quote(str(value), safe="")]
+
+    # Simple top-level path expressions.
+    m = re.match(r'^\.title // ""$', f)
+    if m:
+        if isinstance(value, dict):
+            return [value.get("title", "") or ""]
+        return [""]
+
+    # azdo_fetch_work_item_meta filter:
+    #   {
+    #     title: (.fields["System.Title"] // ""),
+    #     type:  (.fields["System.WorkItemType"] // "")
+    #   }
+    if "title:" in f and "System.Title" in f and "type:" in f and "System.WorkItemType" in f:
+        fields = (value or {}).get("fields", {}) if isinstance(value, dict) else {}
+        return [{
+            "title": fields.get("System.Title", "") or "",
+            "type": fields.get("System.WorkItemType", "") or "",
+        }]
+
+    if f == '.fields["System.WorkItemType"]':
+        fields = (value or {}).get("fields", {}) if isinstance(value, dict) else {}
+        return [fields.get("System.WorkItemType")]
+
+    # cmd_commit: '.fields[$field] // 0' with --arg field <name>
+    if re.match(r'^\.fields\[\$field\]\s*//\s*0$', f):
+        field = args.get("field", "")
+        fields = (value or {}).get("fields", {}) if isinstance(value, dict) else {}
+        v = fields.get(field, 0)
+        if v in (None, ""):
+            v = 0
+        return [v]
+
+    # fetch_current_sprint_items: '.value[0].id'
+    if f == ".value[0].id":
+        try:
+            return [value["value"][0]["id"]]
+        except (KeyError, IndexError, TypeError):
+            return [None]
+
+    # fetch_current_sprint_items: '[.workItemRelations[].target.id] | unique'
+    if "workItemRelations" in f and "unique" in f:
+        try:
+            ids = [rel["target"]["id"] for rel in value.get("workItemRelations", [])]
+            return [sorted(set(ids))]
+        except Exception:
+            return [[]]
+
+    # resolve_interactive: '.value[] | "<id>\t<type>\t<title>\t<state>"'
+    if ".value[]" in f and "System.WorkItemType" in f and "System.Title" in f and "System.State" in f and "select" not in f:
+        out = []
+        for item in (value or {}).get("value", []):
+            fields = item.get("fields", {})
+            out.append("\t".join([
+                str(item.get("id", "")),
+                str(fields.get("System.WorkItemType", "")),
+                str(fields.get("System.Title", "")),
+                str(fields.get("System.State", "")),
+            ]))
+        return out
+
+    # resolve_by_title: '.value[] | select(.fields["System.Title"] | ascii_downcase | contains($term | ascii_downcase)) | "<id>\t<title>"'
+    if ".value[]" in f and "select" in f and "ascii_downcase" in f and "contains" in f:
+        term = args.get("term", "").lower()
+        out = []
+        for item in (value or {}).get("value", []):
+            title = item.get("fields", {}).get("System.Title", "") or ""
+            if term in title.lower():
+                out.append(f"{item.get('id', '')}\t{title}")
+        return out
+
+    die(f"unsupported filter: {f!r}")
+
+
+def main() -> None:
+    flags, filt, positional = parse_args(sys.argv[1:])
+    value = read_input(positional, flags["slurp"], flags["raw_input"])
+    results = run_filter(filt, value, flags["arg_vars"])
+    for r in results:
+        emit(r, flags["raw_output"], flags["compact"])
+
+
+if __name__ == "__main__":
+    main()

@@ -4,19 +4,32 @@ set -euo pipefail
 trap 'printf "\nCancelled.\n" >&2; exit 130' INT
 
 readonly TWK_VERSION="0.1.0"
-readonly TWK_SCRIPT="$(readlink -f "${BASH_SOURCE[0]}")"
-readonly TWK_ROOT="$(cd "$(dirname "${TWK_SCRIPT}")/.." && pwd)"
+TWK_SCRIPT="$(readlink -f "${BASH_SOURCE[0]}")"
+readonly TWK_SCRIPT
+TWK_ROOT="$(cd "$(dirname "${TWK_SCRIPT}")/.." && pwd)"
+readonly TWK_ROOT
 readonly TWK_LIB="${TWK_ROOT}/lib"
+# shellcheck disable=SC2034  # consumed by sourced libs (config.sh, session.sh)
 readonly TWK_CONFIG_DIR="${HOME}/.config/twk"
+# shellcheck disable=SC2034  # consumed by sourced libs (session.sh)
 readonly TWK_DATA_DIR="${HOME}/.local/share/twk/sessions"
 
+# shellcheck source=lib/config.sh
 source "${TWK_LIB}/config.sh"
+# shellcheck source=lib/azdo.sh
 source "${TWK_LIB}/azdo.sh"
+# shellcheck source=lib/resolve.sh
 source "${TWK_LIB}/resolve.sh"
+# shellcheck source=lib/session.sh
 source "${TWK_LIB}/session.sh"
+# shellcheck source=lib/display.sh
 source "${TWK_LIB}/display.sh"
+# shellcheck source=lib/help.sh
 source "${TWK_LIB}/help.sh"
+# shellcheck source=lib/banner.sh
 source "${TWK_LIB}/banner.sh"
+# shellcheck source=lib/dispatch.sh
+source "${TWK_LIB}/dispatch.sh"
 
 check_dependencies() {
     local missing=()
@@ -35,58 +48,5 @@ check_dependencies() {
 }
 
 check_dependencies
-
-print_usage() {
-    print_banner
-    echo ""
-    cat <<'USAGE'
-Usage:
-    twk init [--global]         Configure Azure DevOps connection
-    twk start [task]            Start timing a work item
-    twk pause [task]            Pause timing a work item
-    twk end [task]              Stop timing a work item
-    twk done [task]             Mark a work item as done
-    twk undo [task]             Undo the last event on a session
-    twk cancel [task]           Discard an uncommitted session
-    twk status                  View uncommitted time entries
-    twk commit                  Push time entries to Azure DevOps
-    twk version                 Show version
-
-Arguments:
-    [task]    Work item ID, partial title, or omit for interactive picker
-
-Options:
-    --global  (init only) Write to the global config rather than a project-local one
-    --state   Set the AzDO work item state. Applies to start, pause, end, undo, and
-              cancel (which all touch sessions). On 'done' (state-only, no session),
-              this overrides the configured done-state.
-USAGE
-}
-
-main() {
-    local command="${1:-}"
-    shift || true
-
-    if contains_help_flag "$@"; then
-        show_subcommand_help "${command}"
-        return
-    fi
-
-    case "${command}" in
-        init)    cmd_init "$@" ;;
-        start)   cmd_start "$@" ;;
-        pause)   cmd_pause "$@" ;;
-        end)     cmd_end "$@" ;;
-        done)    cmd_done "$@" ;;
-        undo)    cmd_undo "$@" ;;
-        cancel)  cmd_cancel "$@" ;;
-        status)  cmd_status "$@" ;;
-        commit)  cmd_commit "$@" ;;
-        version) echo "twk ${TWK_VERSION}" ;;
-        help|-h|--help) print_usage ;;
-        "")      print_usage; exit 1 ;;
-        *)       echo "Error: unknown command '${command}'" >&2; print_usage >&2; exit 1 ;;
-    esac
-}
 
 main "$@"

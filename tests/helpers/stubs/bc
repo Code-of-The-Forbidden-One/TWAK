@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+"""
+Minimal bc fallback for the TWAK test suite.
+
+Real bc isn't always installed (Arch base, slim containers). The TWAK
+codebase uses bc for two patterns:
+
+    echo "scale=2; <secs> / 3600" | bc
+    echo "scale=2; <a> + <b>" | bc
+
+Both are stdin-driven, both emit two-decimal results. This stub parses
+those exact patterns. If anything else comes in, it errors with rc=2.
+"""
+from __future__ import annotations
+import re
+import sys
+from decimal import Decimal, ROUND_DOWN
+
+
+def die(msg: str) -> None:
+    print(f"bc-stub: {msg}", file=sys.stderr)
+    sys.exit(2)
+
+
+def quantize(d: Decimal, scale: int) -> Decimal:
+    # Real bc with scale=N truncates (it does not banker's-round); use
+    # ROUND_DOWN to match. Round-2 review #9.
+    if scale <= 0:
+        return d.quantize(Decimal(1), rounding=ROUND_DOWN)
+    q = Decimal(10) ** -scale
+    return d.quantize(q, rounding=ROUND_DOWN)
+
+
+def evaluate(expr: str, scale: int) -> str:
+    expr = expr.strip()
+    # Addition: "<a> + <b>"
+    m = re.match(r"^([\d.+-]+)\s*\+\s*([\d.+-]+)$", expr)
+    if m:
+        a = Decimal(m.group(1))
+        b = Decimal(m.group(2))
+        return _fmt(quantize(a + b, scale))
+    # Division: "<a> / <b>"
+    m = re.match(r"^([\d.+-]+)\s*/\s*([\d.+-]+)$", expr)
+    if m:
+        a = Decimal(m.group(1))
+        b = Decimal(m.group(2))
+        if b == 0:
+            die("division by zero")
+        return _fmt(quantize(a / b, scale))
+    # Subtraction: "<a> - <b>"
+    m = re.match(r"^([\d.+-]+)\s*-\s*([\d.+-]+)$", expr)
+    if m:
+        a = Decimal(m.group(1))
+        b = Decimal(m.group(2))
+        return _fmt(quantize(a - b, scale))
+    # Multiplication: "<a> * <b>"
+    m = re.match(r"^([\d.+-]+)\s*\*\s*([\d.+-]+)$", expr)
+    if m:
+        a = Decimal(m.group(1))
+        b = Decimal(m.group(2))
+        return _fmt(quantize(a * b, scale))
+    # Bare number.
+    m = re.match(r"^[\d.+-]+$", expr)
+    if m:
+        return _fmt(quantize(Decimal(expr), scale))
+    die(f"unsupported expression: {expr!r}")
+
+
+def _fmt(d: Decimal) -> str:
+    # bc emits e.g. "0" for zero scale, ".50" for 0.50 with scale=2,
+    # "1.00" for 1, "-.50" for -0.5. We approximate the common-case
+    # behaviour: leading zero is preserved when |d|>=1, dropped when |d|<1.
+    s = format(d, "f")
+    # bc strips leading zero on values like 0.5 → ".5". Replicate.
+    if s.startswith("0."):
+        s = s[1:]
+    elif s.startswith("-0."):
+        s = "-" + s[2:]
+    return s
+
+
+def main() -> None:
+    text = sys.stdin.read()
+    scale = 0
+    out_lines = []
+    # bc treats `;`-separated and newline-separated statements equivalently.
+    statements = re.split(r"[;\n]", text)
+    for stmt in statements:
+        stmt = stmt.strip()
+        if not stmt:
+            continue
+        m = re.match(r"^scale\s*=\s*(\d+)$", stmt)
+        if m:
+            scale = int(m.group(1))
+            continue
+        out_lines.append(evaluate(stmt, scale))
+    for line in out_lines:
+        print(line)
+
+
+if __name__ == "__main__":
+    main()

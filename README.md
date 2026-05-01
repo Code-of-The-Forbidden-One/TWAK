@@ -16,14 +16,15 @@
 
 ### Prerequisites
 
-| Dependency | Purpose                    | Required |
-|------------|----------------------------|----------|
-| `curl`     | Azure DevOps API requests  | ✅        |
-| `jq`       | JSON parsing               | ✅        |
-| `bc`       | Decimal hour calculations  | ✅        |
-| `fzf`      | Interactive work item picker | ❌ Optional |
+| Dependency | Purpose                                            | Required |
+|------------|----------------------------------------------------|----------|
+| `curl`     | Azure DevOps API requests                          | ✅        |
+| `jq`       | JSON parsing                                       | ✅        |
+| `bc`       | Decimal hour calculations                          | ✅        |
+| `fzf`      | Interactive work item picker                       | ❌ Optional |
+| `git`      | Auto-`.gitignore` for project-local config (PAT protection) | ❌ Optional |
 
-All required dependencies are standard on most Linux distributions. If `fzf` is not installed, `twk` falls back to a numbered list for interactive selection.
+All required dependencies are standard on most Linux distributions. If `fzf` is not installed, `twk` falls back to a numbered list for interactive selection. If `git` isn't on PATH, project-local `twk init` still works — it just can't auto-add `.twk/` to `.gitignore` for you (it'll print a reminder so you can do it manually).
 
 ### Quick Install (one-liner)
 
@@ -431,20 +432,27 @@ twk status            # See everything at a glance
 ```
 TWAK/
 ├── bin/
-│   └── twk              # Entry point and command router
+│   └── twk              # Entry point: bootstraps env, sources libs, calls main
 ├── lib/
 │   ├── config.sh        # Local/global config resolution and init command
 │   ├── azdo.sh          # Azure DevOps REST API integration
-│   ├── resolve.sh       # Work item resolution (ID, title, interactive)
+│   ├── resolve.sh       # Work item resolution (ID, title, interactive pickers)
 │   ├── session.sh       # Session events, start/pause/end/undo/cancel commands
 │   ├── display.sh       # Formatting, status output, and commit command
-│   ├── help.sh          # Per-subcommand --help text
-│   └── banner.sh        # ASCII banner
+│   ├── help.sh          # Per-subcommand --help text + contains_help_flag scanner
+│   ├── banner.sh        # ASCII banner
+│   └── dispatch.sh      # Top-level main() and print_usage()
 ├── man/
 │   └── twk.1            # Man page
+├── tests/
+│   ├── *.bats           # bats-core test suite (one file per lib/*.sh)
+│   ├── helpers/         # Shared setup, AzDO mocks, jq/bc fallback stubs
+│   ├── run.sh           # Test runner wrapper
+│   └── README.md        # How to run the tests
 ├── images/              # README assets
 ├── install.sh           # Local installer (symlinks bin/twk to ~/.local/bin)
 ├── install-remote.sh    # Curl-pipe-bash installer used by the one-liner
+├── docker-test.sh       # Dockerised dev shell / test runner (no host install needed)
 ├── LICENSE
 └── README.md
 ```
@@ -518,6 +526,34 @@ Generate a PAT at: `https://dev.azure.com/{your-org}/_usersettings/tokens`
 | `Microsoft.VSTS.Scheduling.RemainingWork`      | Fetched for reference              |
 | `Microsoft.VSTS.Scheduling.StartDate`          | Fetched for reference              |
 | `Microsoft.VSTS.Scheduling.TargetDate`         | Fetched for reference              |
+
+---
+
+## Development
+
+### Running the tests
+
+The bats-core test suite lives under `tests/`. To run it:
+
+```bash
+./tests/run.sh                       # everything
+./tests/run.sh tests/session.bats    # a single file
+bats tests/                          # equivalent
+```
+
+You'll need `bats-core` on PATH (`pacman -S bash-bats` on Arch, `apt-get install bats` on Debian, `brew install bats-core` on macOS). See `tests/README.md` for the full prerequisites, mock strategy, and layout.
+
+### Running tests in Docker
+
+If you'd rather not install `bats`, `jq`, `bc`, etc. on the host, `docker-test.sh` spins up a throwaway Debian container with everything wired up:
+
+```bash
+./docker-test.sh tests          # run the suite, exit with bats's status
+./docker-test.sh                # interactive shell with twk and bats available
+./docker-test.sh --help         # usage
+```
+
+The source tree is bind-mounted **read-only**, so test runs leave nothing behind on the host except the named volumes that hold any `twk init` config you create during a shell session (the test suite itself never touches them).
 
 ---
 

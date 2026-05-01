@@ -12,6 +12,44 @@ seconds_to_hours() {
     echo "scale=2; ${total_seconds} / 3600" | bc
 }
 
+parse_duration() {
+    # Accepts:
+    #   - decimal hours alone:  "2.5h", "0.25h"
+    #   - integer combos:       "30m", "1h", "1h30m", "1h30m45s", "45s"
+    # Echoes the total seconds. Returns 1 on parse failure.
+    local input="$1"
+
+    if [[ -z "${input}" ]]; then
+        return 1
+    fi
+
+    # Decimal hours is its own special form.
+    if [[ "${input}" =~ ^[0-9]+\.[0-9]+h$ ]]; then
+        local h="${input%h}"
+        echo "scale=0; ${h} * 3600 / 1" | bc
+        return 0
+    fi
+
+    # Integer h/m/s combinations. The whole string must match.
+    if [[ ! "${input}" =~ ^([0-9]+h)?([0-9]+m)?([0-9]+s)?$ ]] || [[ "${input}" == "" ]]; then
+        return 1
+    fi
+
+    # Each anchor used at most once. Empty match → 0.
+    local total=0
+    if [[ "${input}" =~ ([0-9]+)h ]]; then
+        total=$(( total + ${BASH_REMATCH[1]} * 3600 ))
+    fi
+    if [[ "${input}" =~ ([0-9]+)m ]]; then
+        total=$(( total + ${BASH_REMATCH[1]} * 60 ))
+    fi
+    if [[ "${input}" =~ ([0-9]+)s ]]; then
+        total=$(( total + ${BASH_REMATCH[1]} ))
+    fi
+
+    echo "${total}"
+}
+
 readonly STATUS_TITLE_WIDTH=40
 
 truncate_title() {

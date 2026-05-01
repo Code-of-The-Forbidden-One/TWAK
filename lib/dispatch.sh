@@ -26,6 +26,7 @@ Usage:
     twk end              Stop timing a work item
     twk undo             Undo the last event on a session
     twk cancel           Discard an uncommitted session
+    twk adjust           Manually adjust recorded time on a session
     twk status           View uncommitted time entries
     twk commit           Push accumulated hours to Azure DevOps
 
@@ -89,6 +90,7 @@ main() {
         comment) cmd_comment "$@" ;;
         undo)    cmd_undo "$@" ;;
         cancel)  cmd_cancel "$@" ;;
+        adjust)  cmd_adjust "$@" ;;
         list)    cmd_list "$@" ;;
         show)    cmd_show "$@" ;;
         users)   cmd_users "$@" ;;

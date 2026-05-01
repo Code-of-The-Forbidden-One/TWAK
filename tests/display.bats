@@ -526,6 +526,63 @@ setup() {
     [[ "${output}" != *"items in sprint"* ]] || { echo "should be singular; got: ${output}"; return 1; }
 }
 
+@test "parse_duration: rejects empty input" {
+    run parse_duration ""
+    assert_status 1
+}
+
+@test "parse_duration: parses pure hours" {
+    run parse_duration "1h"
+    assert_status 0
+    [[ "${output}" == "3600" ]] || { echo "got: ${output}"; return 1; }
+}
+
+@test "parse_duration: parses pure minutes" {
+    run parse_duration "30m"
+    assert_status 0
+    [[ "${output}" == "1800" ]] || { echo "got: ${output}"; return 1; }
+}
+
+@test "parse_duration: parses pure seconds" {
+    run parse_duration "45s"
+    assert_status 0
+    [[ "${output}" == "45" ]] || { echo "got: ${output}"; return 1; }
+}
+
+@test "parse_duration: parses h+m combination" {
+    run parse_duration "1h30m"
+    assert_status 0
+    [[ "${output}" == "5400" ]] || { echo "got: ${output}"; return 1; }
+}
+
+@test "parse_duration: parses full h+m+s combination" {
+    run parse_duration "1h30m45s"
+    assert_status 0
+    [[ "${output}" == "5445" ]] || { echo "got: ${output}"; return 1; }
+}
+
+@test "parse_duration: parses decimal hours" {
+    require_binary bc
+    run parse_duration "2.5h"
+    assert_status 0
+    [[ "${output}" == "9000" ]] || { echo "got: ${output}"; return 1; }
+}
+
+@test "parse_duration: rejects bare numbers" {
+    run parse_duration "30"
+    assert_status 1
+}
+
+@test "parse_duration: rejects unknown suffix" {
+    run parse_duration "1d"
+    assert_status 1
+}
+
+@test "parse_duration: rejects gibberish" {
+    run parse_duration "abc"
+    assert_status 1
+}
+
 @test "twk_pager: passes through stdin to stdout when stdout is not a tty" {
     # In bats, run captures via pipe, so [[ -t 1 ]] is false → cat path.
     run bash -c 'source /home/lukemccann/Projects/TWAK/lib/display.sh; printf "hello\nworld\n" | twk_pager'

@@ -231,6 +231,58 @@ Examples:
     twk undo 12345 --state Doing        Undo and reset AzDO state
 HELP
             ;;
+        adjust)
+            cat <<'HELP'
+twk adjust - Manually adjust recorded time on a session
+
+Usage:
+    twk adjust [task] [amount]
+
+Arguments:
+    [task]    Work item ID, partial title, or omit to pick from
+              your active sessions
+    [amount]  Format: <op><duration> where <op> is one of '+',
+              '-', or '='. Omit to be prompted interactively.
+
+                +<duration>  Add to elapsed time
+                -<duration>  Subtract from elapsed time
+                =<duration>  Set elapsed time to exactly this
+
+Both args are optional. Omit one or both for interactive flow:
+
+    twk adjust                    Pick task, then prompt for amount
+    twk adjust 12345              Task is set, prompt for amount
+    twk adjust +30m               Pick task, amount already given
+    twk adjust 12345 +30m         Both set, no interaction
+
+Single-arg disambiguation: if the arg starts with +, -, or =,
+it's an amount; otherwise it's a task.
+
+Duration syntax:
+    1h          1 hour
+    30m         30 minutes
+    45s         45 seconds
+    1h30m       combinations of integer h/m/s
+    1h30m45s    full triple
+    2.5h        decimal hours (alone, not combined)
+
+Use cases:
+    twk adjust 12345 +30m       I forgot to start the timer at the start
+    twk adjust 12345 -1h        Left the timer running over lunch
+    twk adjust 12345 =2h        Set the session to exactly 2 hours
+    twk adjust +30m             Pick a session interactively, then add 30m
+    twk adjust                  Fully interactive — pick task, type amount
+
+The adjustment is recorded as an 'adjust|<seconds>' event in
+the session file (the audit trail is preserved). Subsequent
+'twk undo' will pop the adjustment in the same way it pops any
+other event. Subtractions that would make the total negative
+are rejected.
+
+The picker (when no task is given) only lists existing local
+sessions — no point adjusting a session you don't have.
+HELP
+            ;;
         cancel)
             cat <<'HELP'
 twk cancel - Discard an uncommitted session

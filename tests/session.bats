@@ -503,6 +503,286 @@ setup() {
 }
 
 # -----------------------------------------------------------------------------
+# adjust events: session_calculate_elapsed_seconds applies them; session_read_state
+# ignores them so they don't shadow the actual state.
+# -----------------------------------------------------------------------------
+
+@test "session_calculate_elapsed_seconds: adjust event adds to total" {
+    {
+        echo "start|1700000000"
+        echo "pause|1700001800"     # 1800s of real elapsed
+        echo "adjust|600"            # +10m
+    } > "${TWK_DATA_DIR}/100.session"
+
+    run session_calculate_elapsed_seconds 100
+    assert_status 0
+    [[ "${output}" == "2400" ]] || { echo "got: ${output}"; return 1; }
+}
+
+@test "session_calculate_elapsed_seconds: negative adjust subtracts from total" {
+    {
+        echo "start|1700000000"
+        echo "pause|1700003600"     # 3600s elapsed
+        echo "adjust|-1800"          # -30m
+    } > "${TWK_DATA_DIR}/100.session"
+
+    run session_calculate_elapsed_seconds 100
+    assert_status 0
+    [[ "${output}" == "1800" ]] || { echo "got: ${output}"; return 1; }
+}
+
+@test "session_read_state: ignores trailing adjust events" {
+    {
+        echo "start|1700000000"
+        echo "pause|1700001800"
+        echo "adjust|600"
+    } > "${TWK_DATA_DIR}/100.session"
+
+    run session_read_state 100
+    assert_status 0
+    # Last *state* event is pause → STATE_PAUSED
+    [[ "${output}" == "paused" ]] || { echo "got: ${output}"; return 1; }
+}
+
+@test "session_read_state: still returns running when adjust trails a start" {
+    {
+        echo "start|1700000000"
+        echo "adjust|3600"
+    } > "${TWK_DATA_DIR}/100.session"
+
+    run session_read_state 100
+    assert_status 0
+    [[ "${output}" == "running" ]] || { echo "got: ${output}"; return 1; }
+}
+
+# -----------------------------------------------------------------------------
+# cmd_adjust — manually edit recorded elapsed time via 'adjust|<seconds>' events.
+# -----------------------------------------------------------------------------
+
+@test "cmd_adjust: no args → picks task interactively, then prompts for amount" {
+    twk_write_fake_config
+
+    {
+        echo "start|1700000000"
+        echo "pause|1700001800"
+    } > "${TWK_DATA_DIR}/12345.session"
+
+    # Stub the picker to return our known ID without going to network.
+    resolve_for_session_action() { echo "12345"; }
+
+    # Feed the prompt response on stdin.
+    run bash -c "
+        source '${TWK_REPO}/lib/config.sh'
+        source '${TWK_REPO}/lib/azdo.sh'
+        source '${TWK_REPO}/lib/resolve.sh'
+        source '${TWK_REPO}/lib/session.sh'
+        source '${TWK_REPO}/lib/display.sh'
+        export TWK_DATA_DIR='${TWK_DATA_DIR}'
+        export TWK_CONFIG_DIR='${TWK_CONFIG_DIR}'
+        resolve_for_session_action() { echo '12345'; }
+        echo '+15m' | cmd_adjust
+    "
+    assert_status 0
+    assert_output_contains "Adjusted #12345"
+    assert_output_contains "Diff: +00:15:00"
+    grep -q '^adjust|900$' "${TWK_DATA_DIR}/12345.session"
+}
+
+@test "cmd_adjust: single arg disambiguates task vs amount by leading operator" {
+    twk_write_fake_config
+
+    {
+        echo "start|1700000000"
+        echo "pause|1700001800"
+    } > "${TWK_DATA_DIR}/12345.session"
+
+    # When the single arg starts with '+', '-', or '=', it's the amount;
+    # the picker fires for the task. Stub the picker.
+    local captured_query=""
+    resolve_for_session_action() {
+        captured_query="$1"
+        echo "12345"
+    }
+
+    run cmd_adjust "+30m"
+    assert_status 0
+    [[ "${captured_query}" == "" ]] || { echo "expected empty task_query for amount-only invocation: '${captured_query}'"; return 1; }
+    assert_output_contains "Adjusted #12345"
+}
+
+@test "cmd_adjust: single arg without operator is treated as a task, prompts for amount" {
+    twk_write_fake_config
+
+    {
+        echo "start|1700000000"
+        echo "pause|1700001800"
+    } > "${TWK_DATA_DIR}/12345.session"
+
+    local captured_query=""
+    resolve_for_session_action() {
+        captured_query="$1"
+        echo "12345"
+    }
+
+    run bash -c "
+        source '${TWK_REPO}/lib/config.sh'
+        source '${TWK_REPO}/lib/azdo.sh'
+        source '${TWK_REPO}/lib/resolve.sh'
+        source '${TWK_REPO}/lib/session.sh'
+        source '${TWK_REPO}/lib/display.sh'
+        export TWK_DATA_DIR='${TWK_DATA_DIR}'
+        export TWK_CONFIG_DIR='${TWK_CONFIG_DIR}'
+        resolve_for_session_action() { echo \"got_query=\$1\"; echo '12345'; }
+        echo '+10m' | cmd_adjust 12345
+    "
+    assert_status 0
+    assert_output_contains "got_query=12345"
+    assert_output_contains "Adjusted #12345"
+    grep -q '^adjust|600$' "${TWK_DATA_DIR}/12345.session"
+}
+
+@test "cmd_adjust: cancels cleanly when prompt receives empty input" {
+    twk_write_fake_config
+
+    {
+        echo "start|1700000000"
+        echo "pause|1700001800"
+    } > "${TWK_DATA_DIR}/12345.session"
+
+    run bash -c "
+        source '${TWK_REPO}/lib/config.sh'
+        source '${TWK_REPO}/lib/azdo.sh'
+        source '${TWK_REPO}/lib/resolve.sh'
+        source '${TWK_REPO}/lib/session.sh'
+        source '${TWK_REPO}/lib/display.sh'
+        export TWK_DATA_DIR='${TWK_DATA_DIR}'
+        export TWK_CONFIG_DIR='${TWK_CONFIG_DIR}'
+        resolve_for_session_action() { echo '12345'; }
+        echo '' | cmd_adjust 12345
+    "
+    assert_status 1
+    assert_output_contains "Cancelled."
+    # Session file should not have been modified.
+    ! grep -q '^adjust' "${TWK_DATA_DIR}/12345.session"
+}
+
+@test "cmd_adjust: errors on too many args" {
+    twk_write_fake_config
+
+    run cmd_adjust 1 2 3
+    assert_status 1
+    assert_output_contains "too many arguments"
+}
+
+@test "cmd_adjust: rejects amount without +/-/= prefix" {
+    twk_write_fake_config
+
+    run cmd_adjust 12345 30m
+    assert_status 1
+    assert_output_contains "must start with +, -, or ="
+}
+
+@test "cmd_adjust: rejects invalid duration after the operator" {
+    twk_write_fake_config
+
+    run cmd_adjust 12345 +xyz
+    assert_status 1
+    assert_output_contains "invalid duration"
+}
+
+@test "cmd_adjust: errors when no session for the work item" {
+    twk_write_fake_config
+
+    run cmd_adjust 12345 +30m
+    assert_status 1
+    assert_output_contains "no session for work item #12345"
+}
+
+@test "cmd_adjust +<duration>: appends positive delta and reports new total" {
+    twk_write_fake_config
+
+    {
+        echo "start|1700000000"
+        echo "pause|1700001800"     # 30m of elapsed
+    } > "${TWK_DATA_DIR}/12345.session"
+
+    run cmd_adjust 12345 +30m
+    assert_status 0
+    assert_output_contains "Was:  00:30:00"
+    assert_output_contains "Now:  01:00:00"
+    assert_output_contains "Diff: +00:30:00"
+
+    # Adjust event written.
+    grep -q '^adjust|1800$' "${TWK_DATA_DIR}/12345.session"
+}
+
+@test "cmd_adjust -<duration>: appends negative delta" {
+    twk_write_fake_config
+
+    {
+        echo "start|1700000000"
+        echo "pause|1700003600"     # 60m elapsed
+    } > "${TWK_DATA_DIR}/12345.session"
+
+    run cmd_adjust 12345 -15m
+    assert_status 0
+    assert_output_contains "Now:  00:45:00"
+    assert_output_contains "Diff: -00:15:00"
+
+    grep -q '^adjust|-900$' "${TWK_DATA_DIR}/12345.session"
+}
+
+@test "cmd_adjust =<duration>: writes the delta needed to hit the target" {
+    twk_write_fake_config
+
+    {
+        echo "start|1700000000"
+        echo "pause|1700001800"     # 30m elapsed
+    } > "${TWK_DATA_DIR}/12345.session"
+
+    run cmd_adjust 12345 =2h
+    assert_status 0
+    assert_output_contains "Was:  00:30:00"
+    assert_output_contains "Now:  02:00:00"
+
+    # Delta = 7200 - 1800 = 5400
+    grep -q '^adjust|5400$' "${TWK_DATA_DIR}/12345.session"
+}
+
+@test "cmd_adjust: rejects subtraction that would make total negative" {
+    twk_write_fake_config
+
+    {
+        echo "start|1700000000"
+        echo "pause|1700001800"     # 30m elapsed
+    } > "${TWK_DATA_DIR}/12345.session"
+
+    run cmd_adjust 12345 -2h
+    assert_status 1
+    assert_output_contains "negative elapsed time"
+    # Session file should NOT have been modified.
+    ! grep -q '^adjust' "${TWK_DATA_DIR}/12345.session"
+}
+
+@test "cmd_adjust: undo of last adjust pops it cleanly" {
+    twk_write_fake_config
+
+    {
+        echo "start|1700000000"
+        echo "pause|1700001800"
+    } > "${TWK_DATA_DIR}/12345.session"
+
+    run cmd_adjust 12345 +30m
+    assert_status 0
+    grep -q '^adjust|1800$' "${TWK_DATA_DIR}/12345.session"
+
+    # session_pop_last_event should remove the trailing adjust.
+    run session_pop_last_event 12345
+    assert_status 0
+    ! grep -q '^adjust' "${TWK_DATA_DIR}/12345.session"
+}
+
+# -----------------------------------------------------------------------------
 # cmd_assign — PATCH System.AssignedTo for a work item, no session touch.
 # -----------------------------------------------------------------------------
 

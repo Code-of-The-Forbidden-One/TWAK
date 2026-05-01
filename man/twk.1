@@ -190,6 +190,41 @@ When
 is omitted, the interactive picker only lists existing sessions; a
 single match is selected automatically.
 .TP
+.B adjust \fR[\fItask\fR] [\fIamount\fR]
+Manually adjust the recorded elapsed time on a session. Both
+arguments are optional.
+.I amount
+must be a signed duration:
+.BR + \fIduration\fR " (add), " \- \fIduration\fR " (subtract), or"
+.BR = \fIduration\fR
+(set absolute). Duration is one of
+.IR Nh ", " Nm ", " Ns
+or a combination
+.RI ( "1h30m" ", " "1h30m45s" )
+or a decimal hour value
+.RI ( "2.5h" ).
+The adjustment is appended to the session file as
+.IB adjust| signed_seconds
+so the audit trail is preserved and
+.B "twk undo"
+pops the adjustment as the last event.
+.IP
+When
+.I task
+is omitted, the interactive picker lists existing sessions. When
+.I amount
+is omitted,
+.B twk
+prompts for it; an empty response cancels cleanly. Single-arg
+disambiguation: a leading
+.BR + ", " \- ", or " =
+makes the arg an amount, otherwise a task. Subtractions that
+would make the total negative are rejected. Examples:
+.BR "twk adjust 12345 +30m" ,
+.BR "twk adjust +30m" ,
+.BR "twk adjust 12345" ,
+.BR "twk adjust" .
+.TP
 .B cancel \fR[\fItask\fR] [\fB\-\-state\fR \fIstate\fR]
 Discard an uncommitted local session without pushing anything to
 Azure DevOps. The session file is archived to

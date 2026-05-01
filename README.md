@@ -374,6 +374,71 @@ Undid 'pause' on #48210 (now running)
 
 ---
 
+### `twk adjust [task] [amount]`
+
+Manually adjust the recorded elapsed time on a session. Useful for the "I forgot to start the timer" / "I left it running over lunch" / "I want this to be exactly 2h" cases that come up in real use.
+
+Both arguments are optional. Omit either or both to drop into the interactive flow:
+
+| Form | Pickers / prompts shown |
+|---|---|
+| `twk adjust` | Pick task, then prompt for amount |
+| `twk adjust 12345` | No picker, prompt for amount |
+| `twk adjust +30m` | Pick task, amount already given |
+| `twk adjust 12345 +30m` | Neither — direct adjustment |
+
+Single-arg disambiguation: if the argument starts with `+`, `-`, or `=`, it's an amount and the task picker fires. Otherwise it's a task and the amount prompt fires.
+
+Amount format: `<op><duration>` where `<op>` is one of `+`, `-`, or `=`:
+
+| Form | Meaning |
+|---|---|
+| `+30m` | Add 30 minutes to the existing elapsed time |
+| `-1h` | Subtract 1 hour from the existing elapsed time |
+| `=2h` | Set elapsed time to exactly 2 hours |
+
+Duration syntax: `1h`, `30m`, `45s`, combos like `1h30m` or `1h30m45s`, or decimal hours alone like `2.5h`.
+
+```
+$ twk adjust 12345 +30m
+Adjusted #12345:
+  Was:  01:34:12
+  Now:  02:04:12
+  Diff: +00:30:00
+
+$ twk adjust 12345 -1h
+Adjusted #12345:
+  Was:  02:04:12
+  Now:  01:04:12
+  Diff: -01:00:00
+
+$ twk adjust 12345 =2h
+Adjusted #12345:
+  Was:  01:04:12
+  Now:  02:00:00
+  Diff: +00:55:48
+
+$ twk adjust
+Sessions available to adjust:
+   1) #12345   ended      01:00:00     Implement login button
+   2) #12350   paused     00:30:00     Refactor middleware
+Select [1-2] (enter to cancel): 1
+Adjustment for #12345 (e.g. +30m, -1h, =2h): +15m
+Adjusted #12345:
+  Was:  01:00:00
+  Now:  01:15:00
+  Diff: +00:15:00
+```
+
+Notes:
+
+- **Append-only**. The adjustment is recorded as an `adjust|<seconds>` event in the session file. The audit trail is preserved — anyone reading the file later can see exactly what was added/subtracted.
+- **`twk undo` pops adjustments** the same way it pops any other event. Made a mistake? `twk undo` reverses the last adjust.
+- **Negative results are rejected**. If subtracting would put the session below zero, the command errors and nothing changes.
+- **Picker is session-scoped**. Omitting the task drops into a picker over your existing local sessions (running, paused, or ended) — adjusting only makes sense for sessions you have.
+
+---
+
 ### `twk cancel [task] [--state <state>]`
 
 Discards an uncommitted local session. Use this when you started tracking the wrong work item, or left a timer running by mistake.
@@ -700,6 +765,7 @@ Usage:
     twk end              Stop timing a work item
     twk undo             Undo the last event on a session
     twk cancel           Discard an uncommitted session
+    twk adjust           Manually adjust recorded time on a session
     twk status           View uncommitted time entries
     twk commit           Push accumulated hours to Azure DevOps
 
@@ -846,10 +912,11 @@ Sessions are stored as append-only flat files with one event per line:
 start|1714560000
 pause|1714563600
 resume|1714567200
+adjust|1800
 end|1714574400
 ```
 
-Each line is an `event|unix_timestamp` pair. This format is human-readable, easy to debug, and easy to parse.
+The first column is the event type. For `start`/`pause`/`resume`/`end`, the second column is a unix timestamp. For `adjust` (written by `twk adjust`), the second column is a signed delta in seconds — positive adds to the calculated elapsed time, negative subtracts. The format is human-readable, easy to debug, and easy to parse.
 
 ---
 

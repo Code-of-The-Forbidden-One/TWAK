@@ -76,8 +76,10 @@ session_read_state() {
         return
     fi
 
+    # Filter to state events only — adjust events (and any other future
+    # metadata records) must not shadow the actual state.
     local last_event
-    last_event="$(tail -n 1 "${session_file}" | cut -d'|' -f1)"
+    last_event="$(grep -E '^(start|resume|pause|end)\|' "${session_file}" | tail -n 1 | cut -d'|' -f1)"
 
     case "${last_event}" in
         start|resume) echo "${STATE_RUNNING}" ;;
@@ -121,6 +123,11 @@ session_calculate_elapsed_seconds() {
                     total_seconds=$(( total_seconds + timestamp - segment_start ))
                     segment_start=""
                 fi
+                ;;
+            adjust)
+                # 'timestamp' here holds the signed delta in seconds
+                # written by 'twk adjust'.
+                total_seconds=$(( total_seconds + timestamp ))
                 ;;
         esac
     done < "${session_file}"
@@ -440,6 +447,112 @@ cmd_assign() {
         echo "       recognised in this Azure DevOps organisation." >&2
         return 1
     fi
+}
+
+cmd_adjust() {
+    config_require
+
+    local positional=()
+    local arg
+    for arg in "$@"; do
+        positional+=("${arg}")
+    done
+
+    if [[ ${#positional[@]} -gt 2 ]]; then
+        echo "Error: too many arguments." >&2
+        echo "Usage: twk adjust [task] [amount]" >&2
+        return 1
+    fi
+
+    # Disambiguate single-arg form: leading +/-/= → amount, otherwise task.
+    local task_query="" amount=""
+    case ${#positional[@]} in
+        0)
+            task_query=""
+            amount=""
+            ;;
+        1)
+            local single="${positional[0]}"
+            case "${single}" in
+                +*|-*|=*) amount="${single}" ;;
+                *)        task_query="${single}" ;;
+            esac
+            ;;
+        2)
+            task_query="${positional[0]}"
+            amount="${positional[1]}"
+            ;;
+    esac
+
+    local work_item_id
+    work_item_id="$(resolve_for_session_action "${task_query}" "${STATE_RUNNING}|${STATE_PAUSED}|${STATE_ENDED}" "adjust")" || return 1
+
+    if ! session_exists "${work_item_id}"; then
+        echo "Error: no session for work item #${work_item_id}." >&2
+        return 1
+    fi
+
+    # Prompt for amount when missing. Empty input or EOF → clean cancel.
+    if [[ -z "${amount}" ]]; then
+        if ! read -rp "Adjustment for #${work_item_id} (e.g. +30m, -1h, =2h): " amount; then
+            echo "Cancelled." >&2
+            return 1
+        fi
+        if [[ -z "${amount}" ]]; then
+            echo "Cancelled." >&2
+            return 1
+        fi
+    fi
+
+    local op input
+    case "${amount}" in
+        +*) op="add";      input="${amount#+}" ;;
+        -*) op="subtract"; input="${amount#-}" ;;
+        =*) op="set";      input="${amount#=}" ;;
+        *)
+            echo "Error: amount must start with +, -, or = (e.g. +30m, -1h, =2h)." >&2
+            return 1
+            ;;
+    esac
+
+    local seconds
+    if ! seconds="$(parse_duration "${input}")"; then
+        echo "Error: invalid duration '${input}'." >&2
+        echo "       Valid: 1h, 30m, 45s, 1h30m, 1h30m45s, 2.5h" >&2
+        return 1
+    fi
+
+    local current_seconds
+    current_seconds="$(session_calculate_elapsed_seconds "${work_item_id}")"
+
+    local delta
+    case "${op}" in
+        add)      delta="${seconds}" ;;
+        subtract) delta=$(( -seconds )) ;;
+        set)      delta=$(( seconds - current_seconds )) ;;
+    esac
+
+    local new_total=$(( current_seconds + delta ))
+    if [[ "${new_total}" -lt 0 ]]; then
+        echo "Error: adjustment would result in negative elapsed time." >&2
+        echo "       Current: $(format_duration "${current_seconds}"); requested delta: ${delta}s." >&2
+        return 1
+    fi
+
+    session_ensure_data_dir
+    echo "adjust|${delta}" >> "$(session_file_path "${work_item_id}")"
+
+    local diff_str
+    if [[ "${delta}" -ge 0 ]]; then
+        diff_str="+$(format_duration "${delta}")"
+    else
+        diff_str="-$(format_duration "$(( -delta ))")"
+    fi
+
+    echo "Adjusted #${work_item_id}:"
+    echo "  Was:  $(format_duration "${current_seconds}")"
+    echo "  Now:  $(format_duration "${new_total}")"
+    echo "  Diff: ${diff_str}"
 }
 
 cmd_pull() {

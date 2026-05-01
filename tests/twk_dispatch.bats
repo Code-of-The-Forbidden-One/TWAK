@@ -78,6 +78,7 @@ _run_dispatch() {
         cmd_comment() { printf "comment\t%s\n" "$*" >> "$CALL_LOG"; }
         cmd_undo()    { printf "undo\t%s\n"    "$*" >> "$CALL_LOG"; }
         cmd_cancel()  { printf "cancel\t%s\n"  "$*" >> "$CALL_LOG"; }
+        cmd_adjust()  { printf "adjust\t%s\n"  "$*" >> "$CALL_LOG"; }
         cmd_list()    { printf "list\t%s\n"    "$*" >> "$CALL_LOG"; }
         cmd_show()    { printf "show\t%s\n"    "$*" >> "$CALL_LOG"; }
         cmd_users()   { printf "users\t%s\n"   "$*" >> "$CALL_LOG"; }
@@ -139,6 +140,11 @@ _first_call() {
 @test "dispatch: 'twk comment 12345 hi' → cmd_comment 12345 hi" {
     run _run_dispatch comment 12345 hi
     [[ "$(_first_call)" == $'comment\t12345 hi' ]]
+}
+
+@test "dispatch: 'twk adjust 12345 +30m' → cmd_adjust 12345 +30m" {
+    run _run_dispatch adjust 12345 +30m
+    [[ "$(_first_call)" == $'adjust\t12345 +30m' ]]
 }
 
 @test "dispatch: 'twk list' → cmd_list" {

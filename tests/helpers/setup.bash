@@ -21,6 +21,27 @@ TWK_TEST_HELPERS_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 TWK_REPO="$( cd "${TWK_TEST_HELPERS_DIR}/../.." && pwd )"
 export TWK_REPO TWK_TEST_HELPERS_DIR
 
+twk_hide_fzf() {
+    # The resolver branches on `command -v fzf`. If a real fzf is on PATH
+    # (which it is in docker-test.sh's container, and on plenty of dev
+    # machines) the production code will try to launch fzf from inside a
+    # bats `run` subshell with no TTY — and fzf hangs waiting for one.
+    # Override `command` as a function to make fzf-detection always fail;
+    # other `command -v` queries fall through to the builtin so dependency
+    # checks (curl/jq/bc) still work.
+    #
+    # `export -f` is critical: tests that source libs via `bash -c "..."`
+    # spawn a fresh shell, and without exporting the function the inner
+    # shell wouldn't inherit the override and would still see real fzf.
+    command() {
+        if [[ "${1:-}" == "-v" ]] && [[ "${2:-}" == "fzf" ]]; then
+            return 1
+        fi
+        builtin command "$@"
+    }
+    export -f command
+}
+
 twk_setup_env() {
     # bats provides BATS_TEST_TMPDIR per-test (since 1.7).
     : "${BATS_TEST_TMPDIR:=$(mktemp -d -t twk-bats-XXXXXX)}"
@@ -37,6 +58,8 @@ twk_setup_env() {
     unset TWK_ORGANIZATION TWK_PROJECT TWK_TEAM TWK_PAT \
           TWK_TIME_FIELD_TASK TWK_TIME_FIELD_FEATURE \
           TWK_STATE_ACTIVE TWK_STATE_PAUSED TWK_STATE_DONE
+
+    twk_hide_fzf
 }
 
 twk_source_libs() {

@@ -199,6 +199,29 @@ setup() {
     [[ "${captured_body}" == *"20"* ]] || { echo "missing id 20"; return 1; }
 }
 
+@test "azdo_fetch_comments: rc=1 on invalid id without calling api_request" {
+    local sentinel="${BATS_TEST_TMPDIR}/api_request_called"
+    azdo_api_request() { : > "${sentinel}"; }
+    run azdo_fetch_comments "abc"
+    assert_status 1
+    [[ ! -e "${sentinel}" ]] || { echo "api_request was unexpectedly called"; return 1; }
+}
+
+@test "azdo_fetch_comments: GETs /_apis/wit/workitems/<id>/comments" {
+    export TWK_ORGANIZATION="acme" TWK_PROJECT="Platform"
+
+    local captured_method="" captured_url=""
+    azdo_api_request() {
+        captured_method="$1"
+        captured_url="$2"
+        printf '%s' '{"comments":[]}'
+    }
+
+    azdo_fetch_comments 12345 > /dev/null
+    [[ "${captured_method}" == "GET" ]] || { echo "method: ${captured_method}"; return 1; }
+    [[ "${captured_url}" == *"/_apis/wit/workitems/12345/comments"* ]] || { echo "url: ${captured_url}"; return 1; }
+}
+
 @test "azdo_fetch_authenticated_user: GETs /_apis/connectionData on org base" {
     export TWK_ORGANIZATION="acme"
 

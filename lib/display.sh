@@ -441,12 +441,69 @@ cmd_users() {
     } | twk_pager
 }
 
+render_discussion() {
+    local work_item_id="$1"
+
+    local response
+    response="$(azdo_fetch_comments "${work_item_id}" 2>/dev/null)" || {
+        echo "Discussion: (could not fetch comments — check PAT and connectivity)"
+        return
+    }
+
+    local count
+    count="$(echo "${response}" | jq -r '.totalCount // (.comments | length) // 0')"
+
+    if [[ "${count}" -eq 0 ]]; then
+        echo "Discussion: (no comments)"
+        return
+    fi
+
+    local rule
+    rule="$(printf '─%.0s' $(seq 1 78))"
+
+    echo "Discussion (${count} comment$( (( count != 1 )) && echo s )):"
+    echo "${rule}"
+
+    # Stream one comment per line: timestamp<TAB>author<TAB>text-as-base64.
+    # Base64 sidesteps any embedded tabs/newlines/quotes in the HTML body.
+    echo "${response}" | jq -r '
+        .comments
+        | sort_by(.createdDate)
+        | .[]
+        | "\(.createdDate // "" | sub("T"; " ") | .[0:16])\t\(.createdBy.displayName // "Unknown")\t\(.text // "" | @base64)"
+    ' | while IFS=$'\t' read -r ts author html_b64; do
+        echo ""
+        echo "[${ts}] ${author}:"
+        local html plain
+        html="$(printf '%s' "${html_b64}" | base64 -d)"
+        plain="$(normalise_description "${html}" 0)"
+        printf '%s\n' "${plain}" | fold -s -w 76 | sed 's/^/  /'
+    done
+
+    echo ""
+    echo "${rule}"
+}
+
 cmd_show() {
     config_require
 
-    local query
-    query="$(parse_query_arg "$@")"
+    local discussion=false
+    local positional=()
+    local arg
+    for arg in "$@"; do
+        case "${arg}" in
+            --discussion) discussion=true ;;
+            *)            positional+=("${arg}") ;;
+        esac
+    done
 
+    if [[ ${#positional[@]} -gt 1 ]]; then
+        echo "Error: too many arguments." >&2
+        echo "Usage: twk show [task] [--discussion]" >&2
+        return 1
+    fi
+
+    local query="${positional[0]:-}"
     local work_item_id
     work_item_id="$(resolve_work_item "${query}")" || return 1
 
@@ -456,7 +513,13 @@ cmd_show() {
         return 1
     }
 
-    render_show_item "${item_json}" | twk_pager
+    {
+        render_show_item "${item_json}"
+        if [[ "${discussion}" == true ]]; then
+            echo ""
+            render_discussion "${work_item_id}"
+        fi
+    } | twk_pager
 }
 
 cmd_status() {

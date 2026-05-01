@@ -82,6 +82,21 @@ twk commit
 
 ## Commands
 
+### Two flows: commit cycle vs immediate
+
+twk has two distinct ways of writing to Azure DevOps. Knowing which is which avoids surprises about when something hits the board.
+
+| Flow | Commands | When does AzDO see it? |
+|---|---|---|
+| **Commit cycle (deferred)** | `start`, `pause`, `end`, `undo`, `cancel`, `status`, `commit` | `start`/`pause`/`end`/`undo`/`cancel` only touch local session files. AzDO is contacted **only** on `twk commit`, which pushes the accumulated hours in one go. |
+| **Immediate AzDO actions** | `done`, `assign` | PATCH AzDO state / assignee **as soon as you invoke them**. No staging, no `commit`, no twk-side undo — fix via the AzDO web UI or by re-running with different arguments. |
+| **Immediate (alongside session change)** | `--state X` flag on any time-tracking command | Fires an immediate state PATCH on top of the local session change. The session part still goes through the commit cycle; the state change does not. |
+| **Read-only / local** | `list`, `show`, `users`, `pull`, `init` (writes local config), `version`, `help` | No writes to AzDO state. `list`/`show`/`users` read from AzDO. `pull` reads from AzDO and writes only to your local meta cache. `status` is local-only by default; with `--with-existing` it reads from AzDO. |
+
+The commit cycle is the safe, iterable flow — track time offline, review with `status`, fix with `undo`/`cancel`, push when ready. The immediate flow is for things that don't have a meaningful "draft" stage (a state change, an assignment).
+
+---
+
 ### `twk init [--global]`
 
 Configures your Azure DevOps connection.
@@ -117,7 +132,7 @@ $ twk init
     |   |  \    /  /    |    \    |  \
     |___|   \/\/   \____|__  /____|__ \
                            \/        \/
-     Time Worked and Committed
+     Timed Worked and Committed
 
   Azure DevOps Configuration (local: /home/user/Projects/Platform)
 
@@ -389,11 +404,13 @@ twk show "$(twk list -i)"        # pick interactively, then read full details
 
 ---
 
-### `twk show [task]`
+### `twk show [task] [--discussion]`
 
 Prints one work item's full metadata and description in a single labelled block. Use this when `twk list` has truncated a description and you want to read the whole thing without leaving the terminal.
 
 The `task` argument supports the usual resolution modes: numeric ID, partial title (case-insensitive search against the current sprint), or omit for the interactive picker.
+
+Pass `--discussion` to also fetch and render the AzDO Discussion thread (the comment conversation) in chronological order beneath the metadata block. Useful when the context you need lives in the comments rather than the description.
 
 ```
 $ twk show 48210
@@ -422,6 +439,36 @@ Notes:
 - **Missing fields** render as `-`.
 - Hits AzDO directly on each invocation — no offline mode.
 - Long output auto-pages through `less -FRX`. Same opt-out (`TWK_NO_PAGER=1` or `PAGER=''`) as `twk list`.
+
+Sample output with `--discussion`:
+
+```
+$ twk show 48210 --discussion
+──────────────────────────────────────────────────────────────────────────────
+#48210 - Implement login button
+──────────────────────────────────────────────────────────────────────────────
+  Type:       Task
+  State:      Active
+  ...
+
+Description:
+  OAuth2 implementation with PKCE flow...
+
+Discussion (3 comments):
+──────────────────────────────────────────────────────────────────────────────
+
+[2026-04-15 10:30] Luke McCann:
+  Did anyone test this against the legacy callback?
+
+[2026-04-15 11:42] Sarah Khan:
+  Yes, ran through it last week. Edge case with the redirect_uri encoding —
+  see ticket #48050.
+
+[2026-04-16 09:15] Luke McCann:
+  Confirmed, will rebase on 48050 once it lands.
+
+──────────────────────────────────────────────────────────────────────────────
+```
 
 ---
 
@@ -570,20 +617,29 @@ Displays usage information.
 ```
 $ twk help
 Usage:
+  Setup
     twk init             Configure Azure DevOps connection
+
+  Time tracking (commit cycle — local until 'twk commit'):
     twk start            Start timing a work item
     twk pause            Pause timing a work item
     twk end              Stop timing a work item
-    twk done             Mark a work item as done
-    twk assign           Assign a work item to a user
     twk undo             Undo the last event on a session
     twk cancel           Discard an uncommitted session
+    twk status           View uncommitted time entries
+    twk commit           Push accumulated hours to Azure DevOps
+
+  Direct AzDO actions (immediate — write to AzDO right away):
+    twk done             Mark a work item as done (state-only)
+    twk assign           Assign a work item to a user
+
+  Read-only:
     twk list             List current sprint items with metadata
     twk show             Show one work item's full metadata + description
-    twk users            List unique users assigned to current sprint items
+    twk users            List sprint or org-wide users
     twk pull             Refresh cached title/type for all sessions
-    twk status           View uncommitted time entries
-    twk commit           Push time entries to Azure DevOps
+
+  Misc
     twk version          Show version (also: twk -v, twk --version)
 
 Arguments:
@@ -597,6 +653,9 @@ Options:
     -i, --interactive    (list only) Open in fzf with preview pane; prints selected ID
     --me                 (assign only) Assign yourself based on the PAT's identity
     --all                (assign, users) Use org-wide user list (Graph API; needs PAT scope)
+    --discussion         (show only) Append the AzDO Discussion thread (comments)
+
+Note: --state X on any time-tracking command also fires an immediate PATCH to AzDO.
 
 Environment:
     TWK_NO_PAGER         Disable the auto-pager for list / show / status.

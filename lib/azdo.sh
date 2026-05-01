@@ -92,6 +92,15 @@ azdo_fetch_work_item() {
     azdo_api_request "GET" "${url}"
 }
 
+azdo_fetch_comments() {
+    local work_item_id="$1"
+    validate_work_item_id "${work_item_id}" || return 1
+
+    local url
+    url="$(azdo_base_url)/_apis/wit/workitems/${work_item_id}/comments?api-version=7.1-preview.4"
+    azdo_api_request "GET" "${url}"
+}
+
 azdo_fetch_work_items_batch() {
     local ids_json="$1"
 

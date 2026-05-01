@@ -719,6 +719,143 @@ setup() {
     [[ "${x_count}" -eq 600 ]] || { echo "got ${x_count} x's"; return 1; }
 }
 
+@test "render_discussion: prints '(no comments)' when comments array is empty" {
+    require_binary jq
+    azdo_fetch_comments() { printf '%s' '{"totalCount":0,"comments":[]}'; }
+
+    run render_discussion 12345
+    assert_status 0
+    assert_output_contains "Discussion: (no comments)"
+}
+
+@test "render_discussion: degrades gracefully when fetch fails" {
+    azdo_fetch_comments() { return 1; }
+
+    run render_discussion 12345
+    assert_status 0
+    assert_output_contains "could not fetch comments"
+}
+
+@test "render_discussion: renders comments in chronological order with author + timestamp" {
+    require_binary jq
+    require_binary base64
+
+    azdo_fetch_comments() {
+        # Out-of-order on purpose to verify sort_by(.createdDate).
+        printf '%s' '{
+            "totalCount": 3,
+            "comments": [
+                {"createdDate":"2026-04-16T09:15:00Z","createdBy":{"displayName":"Luke McCann"},"text":"Confirmed, will rebase."},
+                {"createdDate":"2026-04-15T10:30:00Z","createdBy":{"displayName":"Sarah Khan"},"text":"<p>First reply</p>"},
+                {"createdDate":"2026-04-15T11:42:00Z","createdBy":{"displayName":"Sarah Khan"},"text":"<b>Edge case</b>"}
+            ]
+        }'
+    }
+
+    run render_discussion 12345
+    assert_status 0
+    assert_output_contains "Discussion (3 comments):"
+    # Each row's header is present.
+    assert_output_contains "[2026-04-15 10:30] Sarah Khan"
+    assert_output_contains "[2026-04-15 11:42] Sarah Khan"
+    assert_output_contains "[2026-04-16 09:15] Luke McCann"
+    # HTML stripped from comment bodies.
+    assert_output_contains "First reply"
+    assert_output_contains "Edge case"
+    [[ "${output}" != *"<p>"* ]] || { echo "HTML leaked: ${output}"; return 1; }
+    [[ "${output}" != *"<b>"* ]] || { echo "HTML leaked: ${output}"; return 1; }
+
+    # Chronological: 10:30 line should appear before 11:42 line, before 09:15 line.
+    local p1 p2 p3
+    p1="$(grep -n "10:30" <<< "${output}" | head -1 | cut -d: -f1)"
+    p2="$(grep -n "11:42" <<< "${output}" | head -1 | cut -d: -f1)"
+    p3="$(grep -n "09:15" <<< "${output}" | head -1 | cut -d: -f1)"
+    [[ "${p1}" -lt "${p2}" ]] || { echo "10:30 not before 11:42"; return 1; }
+    [[ "${p2}" -lt "${p3}" ]] || { echo "11:42 not before 09:15"; return 1; }
+}
+
+@test "render_discussion: trailing count is singular for one comment" {
+    require_binary jq
+    require_binary base64
+
+    azdo_fetch_comments() {
+        printf '%s' '{
+            "totalCount": 1,
+            "comments": [
+                {"createdDate":"2026-04-15T10:30:00Z","createdBy":{"displayName":"Solo"},"text":"alone"}
+            ]
+        }'
+    }
+
+    run render_discussion 12345
+    assert_status 0
+    assert_output_contains "Discussion (1 comment):"
+    [[ "${output}" != *"comments)"* ]] || { echo "should be singular: ${output}"; return 1; }
+}
+
+@test "cmd_show: rejects too many positional arguments" {
+    twk_write_fake_config
+    config_global_file() { printf '%s\n' "${TWK_CONFIG_DIR}/config"; }
+    config_find_local() { return 1; }
+
+    run cmd_show 1 2
+    assert_status 1
+    assert_output_contains "too many arguments"
+}
+
+@test "cmd_show --discussion: appends the discussion block after metadata" {
+    require_binary jq
+    require_binary base64
+    twk_write_fake_config
+    config_global_file() { printf '%s\n' "${TWK_CONFIG_DIR}/config"; }
+    config_find_local() { return 1; }
+
+    azdo_fetch_work_item() {
+        printf '%s' '{"id":12345,"fields":{"System.Title":"With chat","System.WorkItemType":"Task","System.State":"Active"}}'
+    }
+    azdo_fetch_comments() {
+        printf '%s' '{
+            "totalCount": 1,
+            "comments": [
+                {"createdDate":"2026-04-15T10:30:00Z","createdBy":{"displayName":"Luke"},"text":"hello world"}
+            ]
+        }'
+    }
+
+    run cmd_show 12345 --discussion
+    assert_status 0
+    # Metadata block is rendered.
+    assert_output_contains "#12345"
+    assert_output_contains "With chat"
+    # Discussion block is rendered.
+    assert_output_contains "Discussion (1 comment):"
+    assert_output_contains "[2026-04-15 10:30] Luke"
+    assert_output_contains "hello world"
+
+    # Order: metadata header line precedes discussion header.
+    local title_line discussion_line
+    title_line="$(grep -n "With chat" <<< "${output}" | head -1 | cut -d: -f1)"
+    discussion_line="$(grep -n "Discussion" <<< "${output}" | head -1 | cut -d: -f1)"
+    [[ "${title_line}" -lt "${discussion_line}" ]] || { echo "discussion not after metadata"; return 1; }
+}
+
+@test "cmd_show without --discussion: does NOT call comments API" {
+    require_binary jq
+    twk_write_fake_config
+    config_global_file() { printf '%s\n' "${TWK_CONFIG_DIR}/config"; }
+    config_find_local() { return 1; }
+
+    azdo_fetch_work_item() {
+        printf '%s' '{"id":12345,"fields":{"System.Title":"Quiet","System.WorkItemType":"Task","System.State":"New"}}'
+    }
+    local sentinel="${BATS_TEST_TMPDIR}/comments_called"
+    azdo_fetch_comments() { : > "${sentinel}"; }
+
+    run cmd_show 12345
+    assert_status 0
+    [[ ! -e "${sentinel}" ]] || { echo "comments API was called without --discussion"; return 1; }
+}
+
 @test "cmd_show: errors when work item fetch fails" {
     twk_write_fake_config
     config_global_file() { printf '%s\n' "${TWK_CONFIG_DIR}/config"; }

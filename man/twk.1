@@ -9,7 +9,7 @@ twk \- track time worked against Azure DevOps work items
     |   |  \\    /  /    |    \\    |  \\
     |___|   \\/\\/   \\____|__  /____|__ \\
                            \\/        \\/
-     Time Worked and Committed
+     Timed Worked and Committed
 .fi
 .SH SYNOPSIS
 .B twk
@@ -17,12 +17,48 @@ twk \- track time worked against Azure DevOps work items
 .RI [ task ]
 .SH DESCRIPTION
 .B twk
-(Time Worked and Committed) is a CLI tool for tracking time against
+(Timed Worked and Committed) is a CLI tool for tracking time against
 Azure DevOps work items from the terminal. Start, pause, and end
 timing sessions locally, then commit the accumulated hours back to
 your board in one push.
 .PP
 Multiple work items can be tracked in parallel for easy context switching.
+.SH OVERVIEW
+.B twk
+has two distinct ways of writing to Azure DevOps:
+.TP
+.B "Commit cycle (deferred)"
+.BR start ", " pause ", " end ", " undo ", " cancel
+only touch local session files.
+.B commit
+is the single point at which accumulated hours are PATCHed to AzDO.
+This makes the time-tracking flow safe to iterate on offline:
+.B status
+previews what
+.B commit
+will push, and
+.BR undo / cancel
+let you fix mistakes before any of it leaves your machine.
+.TP
+.B "Immediate AzDO actions"
+.BR done " and " assign
+PATCH AzDO state and assignee respectively as soon as you invoke
+them — no staging, no
+.BR commit ,
+no twk-side undo. The
+.B \-\-state
+flag on any time-tracking command also fires an immediate state
+PATCH alongside the local session change.
+.TP
+.B "Read-only"
+.BR list ", " show ", " users ", " status ", " pull ", " init
+either don't write to AzDO at all or only refresh local caches.
+.B init
+writes the local config file and tests AzDO connectivity once.
+.B status
+is local-first; it reads cached titles and only contacts AzDO
+when invoked with
+.BR \-\-with\-existing .
 .SH COMMANDS
 .TP
 .B init \fR[\fB\-\-global\fR]
@@ -194,7 +230,7 @@ The same pager wrapping applies to
 and
 .BR "twk status" .
 .TP
-.B show \fR[\fItask\fR]
+.B show \fR[\fItask\fR] [\fB\-\-discussion\fR]
 Print one work item's full metadata and description as a single
 labelled block: type, state, priority, assignee, estimate, time
 taken, iteration path, and the full description (HTML-stripped,
@@ -207,6 +243,14 @@ The
 argument supports the same resolution modes as the session
 commands (numeric ID, title search, or omitted for the
 interactive picker).
+.IP
+With
+.BR \-\-discussion ,
+the AzDO Discussion thread (comments) is appended after the
+metadata block in chronological order. Each comment renders as
+.IR "[YYYY-MM-DD HH:MM] author:"
+followed by the HTML-stripped body wrapped to 76 characters
+with a two-space indent.
 .TP
 .B users \fR[\fB\-\-all\fR]
 List unique users from the current sprint (default) or the entire

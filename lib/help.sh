@@ -268,11 +268,18 @@ HELP
 twk show - Show one work item's full metadata and description
 
 Usage:
-    twk show [task]
+    twk show [task] [--discussion]
 
 Arguments:
-    [task]   Work item ID, partial title, or omit for the
-             current-sprint interactive picker
+    [task]         Work item ID, partial title, or omit for the
+                   current-sprint interactive picker
+
+Options:
+    --discussion   After the metadata block, append the AzDO
+                   Discussion thread (System.History comments)
+                   in chronological order. One block per
+                   comment showing [timestamp] author and the
+                   HTML-stripped body wrapped to 76 chars.
 
 Fetches the work item from Azure DevOps and prints a single
 labelled block with type, state, priority, assignee, estimate,
@@ -282,15 +289,18 @@ truncation).
 
 Use this when 'twk list' truncates the description and you
 need to read the whole thing without leaving the terminal.
+Use --discussion when context lives in the comment thread —
+no need to leave the terminal for the AzDO web UI.
 
 Output is piped through 'less -FRX' when stdout is a TTY (set
 TWK_NO_PAGER=1 to opt out, or PAGER='' to disable; respects an
 explicit $PAGER). Falls back to cat if less isn't installed.
 
 Examples:
-    twk show 12345               Look up by ID
-    twk show "login bug"         Title-search the current sprint
-    twk show                     Pick interactively
+    twk show 12345                  Look up by ID
+    twk show 12345 --discussion     Include the comment thread
+    twk show "login bug"            Title-search the current sprint
+    twk show                        Pick interactively
 HELP
             ;;
         users)

@@ -17,20 +17,29 @@ print_usage() {
     echo ""
     cat <<'USAGE'
 Usage:
+  Setup
     twk init             Configure Azure DevOps connection
+
+  Time tracking (commit cycle — local until 'twk commit'):
     twk start            Start timing a work item
     twk pause            Pause timing a work item
     twk end              Stop timing a work item
-    twk done             Mark a work item as done
-    twk assign           Assign a work item to a user
     twk undo             Undo the last event on a session
     twk cancel           Discard an uncommitted session
+    twk status           View uncommitted time entries
+    twk commit           Push accumulated hours to Azure DevOps
+
+  Direct AzDO actions (immediate — write to AzDO right away):
+    twk done             Mark a work item as done (state-only)
+    twk assign           Assign a work item to a user
+
+  Read-only:
     twk list             List current sprint items with metadata
     twk show             Show one work item's full metadata + description
-    twk users            List unique users assigned to current sprint items
+    twk users            List sprint or org-wide users
     twk pull             Refresh cached title/type for all sessions
-    twk status           View uncommitted time entries
-    twk commit           Push time entries to Azure DevOps
+
+  Misc
     twk version          Show version (also: twk -v, twk --version)
 
 Arguments:
@@ -44,6 +53,9 @@ Options:
     -i, --interactive    (list only) Open in fzf with preview pane; prints selected ID
     --me                 (assign only) Assign yourself based on the PAT's identity
     --all                (assign, users) Use org-wide user list (Graph API; needs PAT scope)
+    --discussion         (show only) Append the AzDO Discussion thread (comments)
+
+Note: --state X on any time-tracking command also fires an immediate PATCH to AzDO.
 
 Pass --help (or -h) to any subcommand for full per-command help.
 

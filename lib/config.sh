@@ -23,21 +23,28 @@ config_write() {
     local project="$2"
     local team="$3"
     local personal_access_token="$4"
+    local time_field_task="$5"
+    local time_field_feature="$6"
 
     mkdir -p "${TWK_CONFIG_DIR}"
     chmod 700 "${TWK_CONFIG_DIR}"
 
     local escaped_organization escaped_project escaped_team escaped_pat
+    local escaped_time_field_task escaped_time_field_feature
     printf -v escaped_organization '%q' "${organization}"
     printf -v escaped_project '%q' "${project}"
     printf -v escaped_team '%q' "${team}"
     printf -v escaped_pat '%q' "${personal_access_token}"
+    printf -v escaped_time_field_task '%q' "${time_field_task}"
+    printf -v escaped_time_field_feature '%q' "${time_field_feature}"
 
     cat > "$(config_file_path)" <<EOF
 TWK_ORGANIZATION=${escaped_organization}
 TWK_PROJECT=${escaped_project}
 TWK_TEAM=${escaped_team}
 TWK_PAT=${escaped_pat}
+TWK_TIME_FIELD_TASK=${escaped_time_field_task}
+TWK_TIME_FIELD_FEATURE=${escaped_time_field_feature}
 EOF
 
     chmod 600 "$(config_file_path)"
@@ -72,7 +79,26 @@ cmd_init() {
         return 1
     fi
 
-    config_write "${organization}" "${project}" "${team}" "${personal_access_token}"
+    echo ""
+    echo "Time tracking fields"
+    echo "These are the Azure DevOps field names that twk writes time to."
+    echo "Common values: Microsoft.VSTS.Scheduling.CompletedWork, Custom.TimeSpent"
+    echo ""
+
+    local time_field_task time_field_feature
+
+    read -rp "Time field for Tasks (e.g. Custom.TimeSpent): " time_field_task
+    if [[ -z "${time_field_task}" ]]; then
+        echo "Error: task time field is required." >&2
+        return 1
+    fi
+
+    read -rp "Time field for Features (leave blank if same as Tasks): " time_field_feature
+    if [[ -z "${time_field_feature}" ]]; then
+        time_field_feature="${time_field_task}"
+    fi
+
+    config_write "${organization}" "${project}" "${team}" "${personal_access_token}" "${time_field_task}" "${time_field_feature}"
 
     echo ""
     echo "Configuration saved to $(config_file_path)"

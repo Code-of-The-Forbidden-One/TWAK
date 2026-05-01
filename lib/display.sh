@@ -69,7 +69,8 @@ cmd_commit() {
 
     local success_count=0
     local failure_count=0
-    local work_item_id current_state elapsed_seconds new_hours existing_work_item existing_hours total_hours
+    local work_item_id current_state elapsed_seconds new_hours
+    local existing_work_item existing_hours total_hours time_field
 
     while read -r session_file; do
         work_item_id="$(session_work_item_id_from_path "${session_file}")"
@@ -84,16 +85,18 @@ cmd_commit() {
         elapsed_seconds="$(session_calculate_elapsed_seconds "${work_item_id}")"
         new_hours="$(seconds_to_hours "${elapsed_seconds}")"
 
+        time_field="$(azdo_resolve_time_field "${work_item_id}")"
+
         existing_work_item="$(azdo_fetch_work_item "${work_item_id}" 2>/dev/null)"
 
         existing_hours=0
         if [[ -n "${existing_work_item}" ]]; then
-            existing_hours="$(echo "${existing_work_item}" | jq -r '.fields["Microsoft.VSTS.Scheduling.CompletedWork"] // 0')"
+            existing_hours="$(echo "${existing_work_item}" | jq -r --arg field "${time_field}" '.fields[$field] // 0')"
         fi
 
         total_hours="$(echo "scale=2; ${existing_hours} + ${new_hours}" | bc)"
 
-        if azdo_update_completed_work "${work_item_id}" "${total_hours}" > /dev/null 2>&1; then
+        if azdo_update_time_spent "${work_item_id}" "${total_hours}" "${time_field}" > /dev/null 2>&1; then
             session_mark_committed "${work_item_id}"
             echo "  #${work_item_id}: committed ${new_hours}h (total: ${total_hours}h)"
             success_count=$(( success_count + 1 ))

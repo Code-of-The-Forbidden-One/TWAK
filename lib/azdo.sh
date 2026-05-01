@@ -1,10 +1,15 @@
+url_encode() {
+    local string="$1"
+    printf '%s' "${string}" | jq -sRr @uri
+}
+
 azdo_base_url() {
-    echo "https://dev.azure.com/${TWK_ORGANIZATION}/${TWK_PROJECT}"
+    echo "https://dev.azure.com/$(url_encode "${TWK_ORGANIZATION}")/$(url_encode "${TWK_PROJECT}")"
 }
 
 azdo_team_segment() {
     if [[ -n "${TWK_TEAM}" ]]; then
-        echo "/${TWK_TEAM}"
+        echo "/$(url_encode "${TWK_TEAM}")"
     fi
 }
 
@@ -24,11 +29,15 @@ azdo_api_request() {
         --connect-timeout 10
         --max-time 30
         --header "Authorization: Basic ${auth_header}"
-        --header "Content-Type: application/json-patch+json"
         --request "${method}"
     )
 
     if [[ -n "${body}" ]]; then
+        if [[ "${method}" == "PATCH" ]]; then
+            curl_args+=(--header "Content-Type: application/json-patch+json")
+        else
+            curl_args+=(--header "Content-Type: application/json")
+        fi
         curl_args+=(--data "${body}")
     fi
 
@@ -37,7 +46,7 @@ azdo_api_request() {
 
 azdo_test_connection() {
     local url
-    url="https://dev.azure.com/${TWK_ORGANIZATION}/_apis/projects?api-version=7.1"
+    url="https://dev.azure.com/$(url_encode "${TWK_ORGANIZATION}")/_apis/projects?api-version=7.1"
     azdo_api_request "GET" "${url}" > /dev/null 2>&1
 }
 
@@ -80,7 +89,6 @@ azdo_fetch_work_items_batch() {
         "System.WorkItemType",
         "System.State",
         "System.AssignedTo",
-        "Microsoft.VSTS.Scheduling.CompletedWork",
         "Microsoft.VSTS.Scheduling.RemainingWork",
         "Microsoft.VSTS.Scheduling.StartDate",
         "Microsoft.VSTS.Scheduling.TargetDate"
@@ -91,9 +99,28 @@ EOF
     azdo_api_request "POST" "${url}" "${body}"
 }
 
-azdo_update_completed_work() {
+azdo_resolve_time_field() {
     local work_item_id="$1"
-    local completed_hours="$2"
+
+    local work_item_json
+    work_item_json="$(azdo_fetch_work_item "${work_item_id}" 2>/dev/null)" || {
+        echo "${TWK_TIME_FIELD_TASK}"
+        return
+    }
+
+    local work_item_type
+    work_item_type="$(echo "${work_item_json}" | jq -r '.fields["System.WorkItemType"]')"
+
+    case "${work_item_type}" in
+        Feature)  echo "${TWK_TIME_FIELD_FEATURE}" ;;
+        *)        echo "${TWK_TIME_FIELD_TASK}" ;;
+    esac
+}
+
+azdo_update_time_spent() {
+    local work_item_id="$1"
+    local hours="$2"
+    local time_field="$3"
     validate_work_item_id "${work_item_id}" || return 1
 
     local url
@@ -104,8 +131,8 @@ azdo_update_completed_work() {
 [
     {
         "op": "replace",
-        "path": "/fields/Microsoft.VSTS.Scheduling.CompletedWork",
-        "value": ${completed_hours}
+        "path": "/fields/${time_field}",
+        "value": ${hours}
     }
 ]
 EOF

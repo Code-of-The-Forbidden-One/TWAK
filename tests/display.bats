@@ -719,6 +719,196 @@ setup() {
     [[ "${x_count}" -eq 600 ]] || { echo "got ${x_count} x's"; return 1; }
 }
 
+@test "cmd_comment: no args invokes task picker AND editor, then POSTs" {
+    require_binary jq
+    twk_write_fake_config
+
+    # Stub the task resolver — returns a known ID without going to the network.
+    resolve_work_item() { echo "777"; }
+
+    # Fake editor: writes a known body into the tmpfile path it's invoked with.
+    local fake_editor
+    fake_editor="$(mktemp -t twk-fake-editor-XXXXXX)"
+    cat > "${fake_editor}" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "drafted in editor" > "$1"
+EOF
+    chmod +x "${fake_editor}"
+
+    local captured_id="" captured_text=""
+    azdo_post_comment() {
+        captured_id="$1"
+        captured_text="$2"
+        printf '%s' '{"createdDate":"2026-05-02T10:00:00Z"}'
+    }
+
+    EDITOR="${fake_editor}" run cmd_comment
+    rm -f "${fake_editor}"
+
+    assert_status 0
+    [[ "${captured_id}" == "777" ]] || { echo "got id: ${captured_id}"; return 1; }
+    [[ "${captured_text}" == *"drafted in editor"* ]] || { echo "got text: ${captured_text}"; return 1; }
+    assert_output_contains "Posted comment on #777"
+    assert_output_contains "drafted in editor"
+}
+
+@test "cmd_comment: editor mode aborts when the editor leaves the buffer empty" {
+    require_binary jq
+    twk_write_fake_config
+
+    resolve_work_item() { echo "888"; }
+
+    # Editor that erases the file (simulates user clearing all content).
+    local fake_editor
+    fake_editor="$(mktemp -t twk-fake-editor-XXXXXX)"
+    cat > "${fake_editor}" <<'EOF'
+#!/usr/bin/env bash
+: > "$1"
+EOF
+    chmod +x "${fake_editor}"
+
+    local posted=false
+    azdo_post_comment() { posted=true; }
+
+    EDITOR="${fake_editor}" run cmd_comment
+    rm -f "${fake_editor}"
+
+    assert_status 1
+    assert_output_contains "empty comment, aborting"
+    [[ "${posted}" == false ]] || { echo "POST should not have fired"; return 1; }
+}
+
+@test "cmd_comment: editor mode strips '#'-prefixed lines from the body" {
+    require_binary jq
+    twk_write_fake_config
+
+    resolve_work_item() { echo "999"; }
+
+    local fake_editor
+    fake_editor="$(mktemp -t twk-fake-editor-XXXXXX)"
+    cat > "${fake_editor}" <<'EOF'
+#!/usr/bin/env bash
+cat > "$1" <<'INNER'
+real content here
+
+# This is a help line that should be stripped.
+# Another stripped line.
+more real content
+INNER
+EOF
+    chmod +x "${fake_editor}"
+
+    local captured_text=""
+    azdo_post_comment() {
+        captured_text="$2"
+        printf '%s' '{"createdDate":"2026-05-02T10:00:00Z"}'
+    }
+
+    EDITOR="${fake_editor}" run cmd_comment
+    rm -f "${fake_editor}"
+
+    assert_status 0
+    [[ "${captured_text}" == *"real content here"* ]] || { echo "missing first content line"; return 1; }
+    [[ "${captured_text}" == *"more real content"* ]] || { echo "missing second content line"; return 1; }
+    [[ "${captured_text}" != *"help line"* ]] || { echo "comment line leaked into body: ${captured_text}"; return 1; }
+    [[ "${captured_text}" != *"stripped line"* ]] || { echo "comment line leaked into body: ${captured_text}"; return 1; }
+}
+
+@test "cmd_comment: rejects too many positional arguments" {
+    twk_write_fake_config
+
+    run cmd_comment 12345 "text" extra
+    assert_status 1
+    assert_output_contains "too many arguments"
+}
+
+@test "cmd_comment: errors when text is empty" {
+    twk_write_fake_config
+
+    run cmd_comment 12345 ""
+    assert_status 1
+    assert_output_contains "empty comment, aborting"
+}
+
+@test "cmd_comment: errors when text is only whitespace" {
+    twk_write_fake_config
+
+    run cmd_comment 12345 "   "
+    assert_status 1
+    assert_output_contains "empty comment, aborting"
+}
+
+@test "cmd_comment: inline text path posts to azdo_post_comment with the right id and body" {
+    require_binary jq
+    twk_write_fake_config
+
+    local captured_id="" captured_text=""
+    azdo_post_comment() {
+        captured_id="$1"
+        captured_text="$2"
+        printf '%s' '{"id":99,"text":"hello","createdDate":"2026-05-02T10:42:00Z"}'
+    }
+
+    run cmd_comment 12345 "hello world"
+    assert_status 0
+    [[ "${captured_id}" == "12345" ]] || { echo "got id: ${captured_id}"; return 1; }
+    [[ "${captured_text}" == "hello world" ]] || { echo "got text: ${captured_text}"; return 1; }
+    assert_output_contains "Posted comment on #12345 at 2026-05-02 10:42"
+    # Body echoed back, indented.
+    assert_output_contains "  hello world"
+}
+
+@test "cmd_comment: stdin path reads body from standard input via '-'" {
+    require_binary jq
+    twk_write_fake_config
+
+    local captured_text=""
+    azdo_post_comment() {
+        captured_text="$2"
+        printf '%s' '{"id":1,"createdDate":"2026-05-02T10:00:00Z"}'
+    }
+
+    # Bats: pass stdin via run by invoking through bash -c.
+    run bash -c "
+        source '${TWK_REPO}/lib/config.sh'
+        source '${TWK_REPO}/lib/azdo.sh'
+        source '${TWK_REPO}/lib/resolve.sh'
+        source '${TWK_REPO}/lib/session.sh'
+        source '${TWK_REPO}/lib/display.sh'
+        export TWK_DATA_DIR='${TWK_DATA_DIR}'
+        export TWK_CONFIG_DIR='${TWK_CONFIG_DIR}'
+        # Replicate the test mock.
+        azdo_post_comment() { echo \"got: \$2\"; printf '%s' '{\"createdDate\":\"2026-05-02T10:00:00Z\"}'; }
+        printf 'piped content here\n' | cmd_comment 12345 -
+    "
+    assert_status 0
+    assert_output_contains "got: piped content here"
+    assert_output_contains "Posted comment on #12345"
+}
+
+@test "cmd_comment: reports failure when AzDO POST fails" {
+    twk_write_fake_config
+
+    azdo_post_comment() { return 1; }
+
+    run cmd_comment 12345 "doomed"
+    assert_status 1
+    assert_output_contains "failed to post comment on #12345"
+}
+
+@test "cmd_comment: degrades gracefully when API response has no createdDate" {
+    require_binary jq
+    twk_write_fake_config
+
+    azdo_post_comment() { printf '%s' '{"id":1,"text":"ok"}'; }
+
+    run cmd_comment 12345 "no timestamp"
+    assert_status 0
+    # Falls back to the timestamp-less message.
+    assert_output_contains "Posted comment on #12345:"
+    assert_output_contains "  no timestamp"
+}
+
 @test "render_discussion: prints '(no comments)' when comments array is empty" {
     require_binary jq
     azdo_fetch_comments() { printf '%s' '{"totalCount":0,"comments":[]}'; }

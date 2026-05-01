@@ -32,6 +32,7 @@ Usage:
   Direct AzDO actions (immediate — write to AzDO right away):
     twk done             Mark a work item as done (state-only)
     twk assign           Assign a work item to a user
+    twk comment          Post a comment to a work item's Discussion
 
   Read-only:
     twk list             List current sprint items with metadata
@@ -82,6 +83,7 @@ main() {
         end)     cmd_end "$@" ;;
         done)    cmd_done "$@" ;;
         assign)  cmd_assign "$@" ;;
+        comment) cmd_comment "$@" ;;
         undo)    cmd_undo "$@" ;;
         cancel)  cmd_cancel "$@" ;;
         list)    cmd_list "$@" ;;

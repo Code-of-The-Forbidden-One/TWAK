@@ -169,6 +169,43 @@ Examples:
     twk assign --me               Pick task, assign yourself
 HELP
             ;;
+        comment)
+            cat <<'HELP'
+twk comment - Post a comment to a work item's Discussion
+
+Usage:
+    twk comment [task] [text|-]
+
+Arguments:
+    [task]   Work item ID, partial title, or omit for the
+             current-sprint interactive picker
+    [text]   Comment body. Three forms:
+               - inline:    twk comment 12345 "looking at it now"
+               - stdin:     cat notes.txt | twk comment 12345 -
+               - editor:    twk comment 12345    (opens \$EDITOR
+                            or \$VISUAL, falls back to vi)
+
+Posts to AzDO immediately via the work-item Comments API. The
+comment renders in the AzDO Discussion thread and is visible
+to anyone who can see the work item.
+
+Editor mode strips lines starting with '#' (so the help footer
+in the buffer doesn't end up in the comment) and aborts cleanly
+if you save an empty file. Lines outside that prefix are sent
+as-is — AzDO renders them as plain text in the Discussion.
+
+If the POST fails (network, work item not found, permissions)
+the command exits non-zero and nothing is posted. The local
+filesystem is unchanged either way.
+
+Examples:
+    twk comment 12345 "looking at it now"
+    cat changelog.md | twk comment 12345 -
+    twk comment 12345                     # opens editor
+    twk comment "auth refactor"           # title-search + editor
+    twk comment                           # pick task + editor
+HELP
+            ;;
         undo)
             cat <<'HELP'
 twk undo - Undo the last event on a session

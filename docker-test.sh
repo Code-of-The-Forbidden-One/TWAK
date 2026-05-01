@@ -46,7 +46,7 @@ docker run --rm -it \
     -w /twk \
     debian:bookworm-slim \
     bash -c "apt-get update -qq \
-        && apt-get install -y -qq curl jq bc less fzf bats python3 >/dev/null \
+        && apt-get install -y -qq curl jq bc less fzf vim bats python3 >/dev/null \
         && ln -sf /twk/bin/twk /usr/local/bin/twk \
         && echo \"[docker-test] Config and session data persist in named volumes (${CONFIG_VOLUME}, ${DATA_VOLUME}).\" \
         && echo \"[docker-test] Run 'docker volume rm ${CONFIG_VOLUME} ${DATA_VOLUME}' on the host to reset state.\" \

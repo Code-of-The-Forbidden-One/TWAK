@@ -101,6 +101,22 @@ azdo_fetch_comments() {
     azdo_api_request "GET" "${url}"
 }
 
+azdo_post_comment() {
+    local work_item_id="$1"
+    local text="$2"
+    validate_work_item_id "${work_item_id}" || return 1
+
+    local url
+    url="$(azdo_base_url)/_apis/wit/workitems/${work_item_id}/comments?api-version=7.1-preview.4"
+
+    # jq builds the JSON body so any quotes/newlines/special chars in
+    # the comment body are escaped correctly.
+    local body
+    body="$(jq -nc --arg t "${text}" '{text: $t}')"
+
+    azdo_api_request "POST" "${url}" "${body}"
+}
+
 azdo_fetch_work_items_batch() {
     local ids_json="$1"
 

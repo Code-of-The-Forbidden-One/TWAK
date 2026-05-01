@@ -222,6 +222,47 @@ setup() {
     [[ "${captured_url}" == *"/_apis/wit/workitems/12345/comments"* ]] || { echo "url: ${captured_url}"; return 1; }
 }
 
+@test "azdo_post_comment: rc=1 on invalid id without calling api_request" {
+    local sentinel="${BATS_TEST_TMPDIR}/api_request_called"
+    azdo_api_request() { : > "${sentinel}"; }
+    run azdo_post_comment "abc" "hello"
+    assert_status 1
+    [[ ! -e "${sentinel}" ]] || { echo "api_request was unexpectedly called"; return 1; }
+}
+
+@test "azdo_post_comment: POSTs to comments endpoint with JSON-encoded text" {
+    require_binary jq
+    export TWK_ORGANIZATION="acme" TWK_PROJECT="Platform"
+
+    local captured_method="" captured_url="" captured_body=""
+    azdo_api_request() {
+        captured_method="$1"
+        captured_url="$2"
+        captured_body="$3"
+        printf '%s' '{"id":1,"text":"hello","createdDate":"2026-05-02T10:00:00Z"}'
+    }
+
+    azdo_post_comment 12345 "hello world" > /dev/null
+    [[ "${captured_method}" == "POST" ]] || { echo "method: ${captured_method}"; return 1; }
+    [[ "${captured_url}" == *"/_apis/wit/workitems/12345/comments"* ]] || { echo "url: ${captured_url}"; return 1; }
+    # Body should be valid JSON containing the text.
+    echo "${captured_body}" | jq -e . > /dev/null || { echo "body not JSON: ${captured_body}"; return 1; }
+    [[ "${captured_body}" == *"hello world"* ]] || { echo "body: ${captured_body}"; return 1; }
+}
+
+@test "azdo_post_comment: JSON-escapes special characters in body" {
+    require_binary jq
+    export TWK_ORGANIZATION="acme" TWK_PROJECT="Platform"
+
+    local captured_body=""
+    azdo_api_request() { captured_body="$3"; printf '%s' '{}'; }
+
+    azdo_post_comment 1 'has "quotes" and
+newline'
+    # Round-trip through jq to confirm the payload parses.
+    echo "${captured_body}" | jq -e . > /dev/null
+}
+
 @test "azdo_fetch_authenticated_user: GETs /_apis/connectionData on org base" {
     export TWK_ORGANIZATION="acme"
 

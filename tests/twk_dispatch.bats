@@ -75,6 +75,7 @@ _run_dispatch() {
         cmd_end()     { printf "end\t%s\n"     "$*" >> "$CALL_LOG"; }
         cmd_done()    { printf "done\t%s\n"    "$*" >> "$CALL_LOG"; }
         cmd_assign()  { printf "assign\t%s\n"  "$*" >> "$CALL_LOG"; }
+        cmd_comment() { printf "comment\t%s\n" "$*" >> "$CALL_LOG"; }
         cmd_undo()    { printf "undo\t%s\n"    "$*" >> "$CALL_LOG"; }
         cmd_cancel()  { printf "cancel\t%s\n"  "$*" >> "$CALL_LOG"; }
         cmd_list()    { printf "list\t%s\n"    "$*" >> "$CALL_LOG"; }
@@ -133,6 +134,11 @@ _first_call() {
 @test "dispatch: 'twk assign 12345 luke@example.com' → cmd_assign 12345 luke@example.com" {
     run _run_dispatch assign 12345 luke@example.com
     [[ "$(_first_call)" == $'assign\t12345 luke@example.com' ]]
+}
+
+@test "dispatch: 'twk comment 12345 hi' → cmd_comment 12345 hi" {
+    run _run_dispatch comment 12345 hi
+    [[ "$(_first_call)" == $'comment\t12345 hi' ]]
 }
 
 @test "dispatch: 'twk list' → cmd_list" {

@@ -158,6 +158,26 @@ user resolution fails, the PATCH fails and the work item is
 left unchanged. Read-only against local sessions; modifies
 AzDO state only.
 .TP
+.B comment \fR[\fItask\fR] [\fItext\fR | \fB\-\fR]
+Post a comment to the work item's Discussion thread. Three input
+modes for the comment body: an inline string as the second
+positional argument; the literal
+.B \-
+to read from standard input (so
+.B "cat notes.txt | twk comment 12345 \-"
+works); or, with the body argument omitted, an interactive
+.B $EDITOR
+session
+.RB ( $VISUAL
+takes precedence; falls back to
+.BR vi ).
+Editor mode strips lines starting with
+.B #
+and aborts cleanly on empty content. The POST is immediate —
+modifies AzDO state, no local file changes, no commit cycle.
+Listed in the Discussion thread and visible to anyone with
+read access to the work item.
+.TP
 .B undo \fR[\fItask\fR] [\fB\-\-state\fR \fIstate\fR]
 Remove the most recent event (start, resume, pause, or end) from the
 session file. Useful for recovering from a typo such as ending a

@@ -484,6 +484,83 @@ render_discussion() {
     echo "${rule}"
 }
 
+cmd_comment() {
+    config_require
+
+    local positional=()
+    local arg
+    for arg in "$@"; do
+        positional+=("${arg}")
+    done
+
+    if [[ ${#positional[@]} -gt 2 ]]; then
+        echo "Error: too many arguments." >&2
+        echo "Usage: twk comment [task] [text|-]" >&2
+        return 1
+    fi
+
+    local task_query="${positional[0]:-}"
+    local text_arg="${positional[1]:-}"
+
+    local work_item_id
+    work_item_id="$(resolve_work_item "${task_query}")" || return 1
+
+    local text
+    if [[ "${text_arg}" == "-" ]]; then
+        # Read from stdin (e.g. piped: cat notes.txt | twk comment 12345 -)
+        text="$(cat)"
+    elif [[ -n "${text_arg}" ]]; then
+        text="${text_arg}"
+    else
+        # Open $EDITOR (or $VISUAL, falling back to vi). The editor takes
+        # over the terminal directly — no command substitution wrapping.
+        local editor="${VISUAL:-${EDITOR:-vi}}"
+        local tmpfile
+        tmpfile="$(mktemp -t twk-comment-XXXXXX)" || {
+            echo "Error: failed to create temp file." >&2
+            return 1
+        }
+
+        cat > "${tmpfile}" <<EOF
+
+
+# Enter your comment for #${work_item_id} above.
+# Lines starting with '#' are stripped from the comment.
+# Save empty content to abort.
+EOF
+
+        if ! "${editor}" "${tmpfile}"; then
+            rm -f "${tmpfile}"
+            echo "Error: editor exited non-zero, aborting." >&2
+            return 1
+        fi
+
+        text="$(grep -v '^#' "${tmpfile}")"
+        rm -f "${tmpfile}"
+    fi
+
+    if [[ -z "${text//[[:space:]]/}" ]]; then
+        echo "Error: empty comment, aborting." >&2
+        return 1
+    fi
+
+    local response
+    response="$(azdo_post_comment "${work_item_id}" "${text}" 2>/dev/null)" || {
+        echo "Error: failed to post comment on #${work_item_id}." >&2
+        return 1
+    }
+
+    local ts
+    ts="$(echo "${response}" | jq -r '.createdDate // "" | sub("T"; " ") | .[0:16]')"
+
+    if [[ -n "${ts}" ]]; then
+        echo "Posted comment on #${work_item_id} at ${ts}:"
+    else
+        echo "Posted comment on #${work_item_id}:"
+    fi
+    printf '%s\n' "${text}" | sed 's/^/  /'
+}
+
 cmd_show() {
     config_require
 

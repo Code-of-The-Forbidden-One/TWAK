@@ -22,6 +22,7 @@ Usage:
     twk pause            Pause timing a work item
     twk end              Stop timing a work item
     twk done             Mark a work item as done
+    twk assign           Assign a work item to a user
     twk undo             Undo the last event on a session
     twk cancel           Discard an uncommitted session
     twk list             List current sprint items with metadata
@@ -29,7 +30,7 @@ Usage:
     twk pull             Refresh cached title/type for all sessions
     twk status           View uncommitted time entries
     twk commit           Push time entries to Azure DevOps
-    twk version          Show version
+    twk version          Show version (also: twk -v, twk --version)
 
 Arguments:
     [task]               Work item ID, partial title, or omit for interactive picker
@@ -65,6 +66,7 @@ main() {
         pause)   cmd_pause "$@" ;;
         end)     cmd_end "$@" ;;
         done)    cmd_done "$@" ;;
+        assign)  cmd_assign "$@" ;;
         undo)    cmd_undo "$@" ;;
         cancel)  cmd_cancel "$@" ;;
         list)    cmd_list "$@" ;;
@@ -72,7 +74,7 @@ main() {
         pull)    cmd_pull "$@" ;;
         status)  cmd_status "$@" ;;
         commit)  cmd_commit "$@" ;;
-        version) echo "twk ${TWK_VERSION}" ;;
+        version|-v|--version) echo "twk ${TWK_VERSION}" ;;
         help|-h|--help) print_usage ;;
         "")      print_usage; exit 1 ;;
         *)       echo "Error: unknown command '${command}'" >&2; print_usage >&2; exit 1 ;;

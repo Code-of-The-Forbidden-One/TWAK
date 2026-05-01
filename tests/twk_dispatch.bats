@@ -74,6 +74,7 @@ _run_dispatch() {
         cmd_pause()   { printf "pause\t%s\n"   "$*" >> "$CALL_LOG"; }
         cmd_end()     { printf "end\t%s\n"     "$*" >> "$CALL_LOG"; }
         cmd_done()    { printf "done\t%s\n"    "$*" >> "$CALL_LOG"; }
+        cmd_assign()  { printf "assign\t%s\n"  "$*" >> "$CALL_LOG"; }
         cmd_undo()    { printf "undo\t%s\n"    "$*" >> "$CALL_LOG"; }
         cmd_cancel()  { printf "cancel\t%s\n"  "$*" >> "$CALL_LOG"; }
         cmd_list()    { printf "list\t%s\n"    "$*" >> "$CALL_LOG"; }
@@ -128,6 +129,11 @@ _first_call() {
     [[ "$(_first_call)" == $'cancel\t12345' ]]
 }
 
+@test "dispatch: 'twk assign 12345 luke@example.com' → cmd_assign 12345 luke@example.com" {
+    run _run_dispatch assign 12345 luke@example.com
+    [[ "$(_first_call)" == $'assign\t12345 luke@example.com' ]]
+}
+
 @test "dispatch: 'twk list' → cmd_list" {
     run _run_dispatch list
     [[ "$(_first_call)" == $'list\t' ]]
@@ -165,6 +171,18 @@ _first_call() {
 
 @test "dispatch: 'twk version' → prints 'twk <version>'" {
     run _run_dispatch version
+    assert_status 0
+    assert_output_contains "twk 0.1.0"
+}
+
+@test "dispatch: 'twk -v' → prints 'twk <version>'" {
+    run _run_dispatch -v
+    assert_status 0
+    assert_output_contains "twk 0.1.0"
+}
+
+@test "dispatch: 'twk --version' → prints 'twk <version>'" {
+    run _run_dispatch --version
     assert_status 0
     assert_output_contains "twk 0.1.0"
 }

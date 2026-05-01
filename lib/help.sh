@@ -127,6 +127,32 @@ Examples:
     twk done 12345 --state "Code Review"
 HELP
             ;;
+        assign)
+            cat <<'HELP'
+twk assign - Assign a work item to a user in Azure DevOps
+
+Usage:
+    twk assign <task> <user>
+
+Arguments:
+    <task>   Work item ID, partial title, or omit for the
+             current-sprint interactive picker
+    <user>   Email, display name, or unique name as recognised
+             by your Azure DevOps organisation
+
+PATCHes System.AssignedTo on the work item. Does not touch any
+local session — assignment is purely an AzDO state change.
+
+If the user can't be resolved by AzDO (typo, not in the org,
+disabled account), the PATCH fails and twk reports the error.
+The work item is left unchanged.
+
+Examples:
+    twk assign 12345 luke@example.com
+    twk assign 12345 "Luke McCann"
+    twk assign "auth refactor" alice@example.com
+HELP
+            ;;
         undo)
             cat <<'HELP'
 twk undo - Undo the last event on a session

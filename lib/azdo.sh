@@ -180,6 +180,22 @@ azdo_resolve_time_field() {
     esac
 }
 
+azdo_update_assigned_to() {
+    local work_item_id="$1"
+    local user="$2"
+    validate_work_item_id "${work_item_id}" || return 1
+
+    local url
+    url="$(azdo_base_url)/_apis/wit/workitems/${work_item_id}?api-version=7.1"
+
+    # JSON-encode the user string via jq so quotes / special characters
+    # in display names don't corrupt the patch body.
+    local body
+    body="$(jq -nc --arg u "${user}" '[{op:"replace",path:"/fields/System.AssignedTo",value:$u}]')"
+
+    azdo_api_request "PATCH" "${url}" "${body}"
+}
+
 azdo_update_state() {
     local work_item_id="$1"
     local new_state="$2"

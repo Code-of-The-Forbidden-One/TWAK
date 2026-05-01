@@ -88,6 +88,19 @@ timer session. Uses the configured done state by default, or a specific
 state via
 .BR \-\-state .
 .TP
+.B assign \fItask\fR \fIuser\fR
+PATCH
+.I System.AssignedTo
+on the work item to assign it to the given user. The
+.I task
+argument supports the usual resolution modes (numeric ID, title
+search, or interactive picker).
+.I user
+must be an email address, display name, or unique name that
+Azure DevOps can resolve. If resolution fails, the PATCH fails
+and the work item is left unchanged. Read-only against local
+sessions; modifies AzDO state only.
+.TP
 .B undo \fR[\fItask\fR] [\fB\-\-state\fR \fIstate\fR]
 Remove the most recent event (start, resume, pause, or end) from the
 session file. Useful for recovering from a typo such as ending a
@@ -214,8 +227,16 @@ Push accumulated time to the configured time field on each work item in
 Azure DevOps. The target field depends on work item type (Task vs Feature)
 as configured during init. Time is additive. Running sessions are skipped.
 .TP
+.B version \fR(also \fB\-v\fR, \fB\-\-version\fR)
+Print the version number. The flag forms
+.B \-v
+and
+.B \-\-version
+work as top-level invocations
+.RB ( "twk -v" ", " "twk --version" )
+and produce identical output to the
 .B version
-Print the version number.
+subcommand.
 .TP
 .B help
 Print usage information.

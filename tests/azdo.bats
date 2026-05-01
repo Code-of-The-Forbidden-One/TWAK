@@ -199,6 +199,46 @@ setup() {
     [[ "${captured_body}" == *"20"* ]] || { echo "missing id 20"; return 1; }
 }
 
+@test "azdo_update_assigned_to: rc=1 on invalid id without calling api_request" {
+    local sentinel="${BATS_TEST_TMPDIR}/api_request_called"
+    azdo_api_request() { : > "${sentinel}"; }
+    run azdo_update_assigned_to "not-numeric" "luke@example.com"
+    assert_status 1
+    [[ ! -e "${sentinel}" ]] || { echo "api_request was unexpectedly called"; return 1; }
+}
+
+@test "azdo_update_assigned_to: PATCHes System.AssignedTo with the user value" {
+    require_binary jq
+    export TWK_ORGANIZATION="acme" TWK_PROJECT="Platform"
+
+    local captured_method="" captured_url="" captured_body=""
+    azdo_api_request() {
+        captured_method="$1"
+        captured_url="$2"
+        captured_body="$3"
+    }
+
+    azdo_update_assigned_to 12345 "luke@example.com"
+    [[ "${captured_method}" == "PATCH" ]] || { echo "method: ${captured_method}"; return 1; }
+    [[ "${captured_url}" == *"workitems/12345"* ]] || { echo "url: ${captured_url}"; return 1; }
+    [[ "${captured_body}" == *"System.AssignedTo"* ]] || { echo "body: ${captured_body}"; return 1; }
+    [[ "${captured_body}" == *"luke@example.com"* ]] || { echo "body: ${captured_body}"; return 1; }
+    [[ "${captured_body}" == *'"op":"replace"'* ]] || { echo "body: ${captured_body}"; return 1; }
+}
+
+@test "azdo_update_assigned_to: JSON-escapes user values containing quotes" {
+    require_binary jq
+    export TWK_ORGANIZATION="acme" TWK_PROJECT="Platform"
+
+    local captured_body=""
+    azdo_api_request() { captured_body="$3"; }
+
+    # A display name with an embedded quote — jq must escape it.
+    azdo_update_assigned_to 1 'Quoth "the" Raven'
+    # The body must be valid JSON that jq can parse back.
+    echo "${captured_body}" | jq -e . > /dev/null || { echo "invalid JSON: ${captured_body}"; return 1; }
+}
+
 @test "azdo_fetch_existing_times: POSTs to workitemsbatch with configured fields" {
     export TWK_ORGANIZATION="acme" TWK_PROJECT="Platform"
     export TWK_TIME_FIELD_TASK="Custom.TaskTime"

@@ -249,6 +249,31 @@ $ twk done 48215 --state "Code Review"
 
 ---
 
+### `twk assign <task> <user>`
+
+Assigns a work item to a user in Azure DevOps. Does not affect any local session — assignment is purely an AzDO state change (PATCH on `System.AssignedTo`).
+
+The task argument supports the usual resolution modes (numeric ID, title search, or interactive picker). The user argument is whatever Azure DevOps recognises: email address, display name, or unique name.
+
+```
+$ twk assign 12345 luke@example.com
+Assigned #12345 to luke@example.com
+
+$ twk assign "auth refactor" "Sarah Khan"
+Assigned #12347 to Sarah Khan
+```
+
+If the user can't be resolved (typo, not in the org, disabled account), the PATCH fails and the work item is left unchanged:
+
+```
+$ twk assign 12345 nobody@nowhere
+Error: failed to assign #12345 to nobody@nowhere.
+       Check that the user (email, display name, or unique name) is
+       recognised in this Azure DevOps organisation.
+```
+
+---
+
 ### `twk undo [task] [--state <state>]`
 
 Removes the most recent event (`start`, `resume`, `pause`, or `end`) from a session file. Use this when you make a typo - for example, ending a session when you meant to pause it.
@@ -468,12 +493,18 @@ Done: 2 committed, 1 failed/skipped.
 
 ---
 
-### `twk version`
+### `twk version` (also `-v` / `--version`)
 
-Displays the current version.
+Displays the current version. All three forms produce identical output:
 
 ```
 $ twk version
+twk 0.1.0
+
+$ twk -v
+twk 0.1.0
+
+$ twk --version
 twk 0.1.0
 ```
 
@@ -491,6 +522,7 @@ Usage:
     twk pause            Pause timing a work item
     twk end              Stop timing a work item
     twk done             Mark a work item as done
+    twk assign           Assign a work item to a user
     twk undo             Undo the last event on a session
     twk cancel           Discard an uncommitted session
     twk list             List current sprint items with metadata
@@ -498,7 +530,7 @@ Usage:
     twk pull             Refresh cached title/type for all sessions
     twk status           View uncommitted time entries
     twk commit           Push time entries to Azure DevOps
-    twk version          Show version
+    twk version          Show version (also: twk -v, twk --version)
 
 Arguments:
     [task]               Work item ID, partial title, or omit for interactive picker

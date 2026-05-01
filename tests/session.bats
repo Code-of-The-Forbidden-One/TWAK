@@ -503,6 +503,71 @@ setup() {
 }
 
 # -----------------------------------------------------------------------------
+# cmd_assign — PATCH System.AssignedTo for a work item, no session touch.
+# -----------------------------------------------------------------------------
+
+@test "cmd_assign: errors when no args given" {
+    twk_write_fake_config
+
+    run cmd_assign
+    assert_status 1
+    assert_output_contains "requires a task and a user"
+    assert_output_contains "Usage: twk assign"
+}
+
+@test "cmd_assign: errors when only one arg given" {
+    twk_write_fake_config
+
+    run cmd_assign 12345
+    assert_status 1
+    assert_output_contains "requires a task and a user"
+}
+
+@test "cmd_assign: errors when too many args given" {
+    twk_write_fake_config
+
+    run cmd_assign 12345 a b
+    assert_status 1
+    assert_output_contains "too many arguments"
+}
+
+@test "cmd_assign: errors on empty user string" {
+    twk_write_fake_config
+
+    run cmd_assign 12345 ""
+    assert_status 1
+    assert_output_contains "must not be empty"
+}
+
+@test "cmd_assign: routes through resolve_work_item then PATCHes" {
+    twk_write_fake_config
+
+    local captured_id="" captured_user=""
+    azdo_update_assigned_to() {
+        captured_id="$1"
+        captured_user="$2"
+        return 0
+    }
+
+    run cmd_assign 12345 "luke@example.com"
+    assert_status 0
+    assert_output_contains "Assigned #12345 to luke@example.com"
+    [[ "${captured_id}" == "12345" ]] || { echo "got id: ${captured_id}"; return 1; }
+    [[ "${captured_user}" == "luke@example.com" ]] || { echo "got user: ${captured_user}"; return 1; }
+}
+
+@test "cmd_assign: reports failure when AzDO PATCH fails" {
+    twk_write_fake_config
+
+    azdo_update_assigned_to() { return 1; }
+
+    run cmd_assign 12345 "luke@example.com"
+    assert_status 1
+    assert_output_contains "failed to assign #12345 to luke@example.com"
+    assert_output_contains "recognised in this Azure DevOps organisation"
+}
+
+# -----------------------------------------------------------------------------
 # cmd_pull — refreshes .meta for every uncommitted session via
 # azdo_fetch_work_item_meta (overridden per test).
 # -----------------------------------------------------------------------------

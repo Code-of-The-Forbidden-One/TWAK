@@ -378,6 +378,42 @@ cmd_done() {
     apply_state_change "${work_item_id}" "${target_state}"
 }
 
+cmd_assign() {
+    config_require
+
+    if [[ $# -lt 2 ]]; then
+        echo "Error: 'twk assign' requires a task and a user." >&2
+        echo "Usage: twk assign <task> <user>" >&2
+        return 1
+    fi
+    if [[ $# -gt 2 ]]; then
+        echo "Error: too many arguments." >&2
+        echo "Usage: twk assign <task> <user>" >&2
+        return 1
+    fi
+
+    local task_query="$1"
+    local user="$2"
+
+    if [[ -z "${user}" ]]; then
+        echo "Error: user must not be empty." >&2
+        echo "Usage: twk assign <task> <user>" >&2
+        return 1
+    fi
+
+    local work_item_id
+    work_item_id="$(resolve_work_item "${task_query}")" || return 1
+
+    if azdo_update_assigned_to "${work_item_id}" "${user}" > /dev/null 2>&1; then
+        echo "Assigned #${work_item_id} to ${user}"
+    else
+        echo "Error: failed to assign #${work_item_id} to ${user}." >&2
+        echo "       Check that the user (email, display name, or unique name) is" >&2
+        echo "       recognised in this Azure DevOps organisation." >&2
+        return 1
+    fi
+}
+
 cmd_pull() {
     config_require
 

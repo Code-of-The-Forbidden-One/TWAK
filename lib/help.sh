@@ -7,14 +7,26 @@ show_subcommand_help() {
 twk init - Configure Azure DevOps connection
 
 Usage:
-    twk init
+    twk init [--global]
+
+Options:
+    --global    Write the configuration to ~/.config/twk/config
+                instead of a project-local .twk/config
 
 Prompts for your organisation, project, team, personal access token,
-and the Azure DevOps field names used for time tracking. Stores
-credentials at ~/.config/twk/config with restrictive permissions
-(600). Tests the connection after saving.
+and the Azure DevOps field names used for time tracking.
 
-Re-run to update your configuration at any time.
+By default, writes a project-local config to .twk/config in the
+current directory. When twk runs, it walks up from the current
+directory looking for .twk/config; if none is found, it falls back
+to the global config at ~/.config/twk/config.
+
+If the project-local config is created inside a git repository,
+twk will append '.twk/' to .gitignore (creating the file if needed)
+to keep your Personal Access Token out of version control.
+
+Both files are stored with restrictive permissions (600 file, 700
+directory). Re-run to update your configuration at any time.
 HELP
             ;;
         start)
@@ -52,6 +64,10 @@ Arguments:
 Pauses an active session. Elapsed time is preserved and can be
 resumed with 'twk start'. Only works on currently running items.
 
+When omitted, the interactive picker only lists currently running
+sessions (not the full sprint). If exactly one is running, it is
+selected automatically.
+
 Examples:
     twk pause 12345
     twk pause "login bug"
@@ -73,6 +89,10 @@ Ends a session. The work item can be running or paused. Once ended,
 the session is ready to commit to Azure DevOps.
 
 By default, ending a session does not change the work item state.
+
+When omitted, the interactive picker only lists running or paused
+sessions (not already-ended ones, and not the full sprint). If
+exactly one is in a valid state, it is selected automatically.
 
 Examples:
     twk end 12345                       End without changing state
@@ -100,16 +120,74 @@ Examples:
     twk done 12345 --state "Code Review"
 HELP
             ;;
+        undo)
+            cat <<'HELP'
+twk undo - Undo the last event on a session
+
+Usage:
+    twk undo [task] [--state <state>]
+
+Arguments:
+    [task]            Work item ID, partial title, or omit for interactive picker
+    --state <state>   Set the work item state in Azure DevOps
+
+Removes the most recent event (start, resume, pause, or end) from
+the session file. Use this to recover from a typo such as hitting
+'end' when you meant 'pause'. If the only event is removed, the
+session file is deleted.
+
+When omitted, the interactive picker only lists existing sessions
+(not the full sprint). If exactly one session exists, it is
+selected automatically.
+
+Examples:
+    twk undo 12345                      Undo the last event
+    twk undo 12345 --state Doing        Undo and reset AzDO state
+HELP
+            ;;
+        cancel)
+            cat <<'HELP'
+twk cancel - Discard an uncommitted session
+
+Usage:
+    twk cancel [task] [--state <state>]
+
+Arguments:
+    [task]            Work item ID, partial title, or omit for interactive picker
+    --state <state>   Set the work item state in Azure DevOps
+
+Discards the local session for a work item without committing
+anything to Azure DevOps. The session file is moved to
+~/.local/share/twk/sessions/cancelled/ for audit rather than
+deleted outright. Use this when you started tracking the wrong
+work item, or left a timer running by mistake.
+
+When omitted, the interactive picker only lists existing sessions
+(not the full sprint). If exactly one session exists, it is
+selected automatically.
+
+Examples:
+    twk cancel 12345                    Discard session, keep AzDO state
+    twk cancel 12345 --state "To Do"    Discard and revert AzDO state
+HELP
+            ;;
         status)
             cat <<'HELP'
-twk status - View uncommitted time entries
+twk status - View active config and uncommitted time entries
 
 Usage:
     twk status
 
-Displays all tracked sessions that have not been committed to Azure
-DevOps. Shows the work item ID, current state (running, paused, or
-ended), elapsed time, and decimal hours.
+Prints the active config path and its scope (local or global),
+followed by every tracked session that hasn't been committed to
+Azure DevOps. For each session, shows the work item ID, cached
+title (truncated to 40 chars), current state (running, paused,
+or ended), elapsed time, and decimal hours.
+
+Titles are cached on first 'twk start <id>' to a sidecar .meta
+file, so 'status' itself never hits the network. Sessions
+without a cached title display '(no title cached)' - resume
+once with 'twk start' while online to backfill.
 HELP
             ;;
         commit)
@@ -134,7 +212,12 @@ HELP
     esac
 }
 
-is_help_flag() {
-    local arg="${1:-}"
-    [[ "${arg}" == "--help" ]] || [[ "${arg}" == "-h" ]]
+contains_help_flag() {
+    local arg
+    for arg in "$@"; do
+        case "${arg}" in
+            --help|-h) return 0 ;;
+        esac
+    done
+    return 1
 }

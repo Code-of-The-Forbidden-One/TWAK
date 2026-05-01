@@ -99,6 +99,18 @@ EOF
     azdo_api_request "POST" "${url}" "${body}"
 }
 
+azdo_fetch_work_item_meta() {
+    local work_item_id="$1"
+
+    local work_item_json
+    work_item_json="$(azdo_fetch_work_item "${work_item_id}" 2>/dev/null)" || return 1
+
+    printf '%s' "${work_item_json}" | jq -c '{
+        title: (.fields["System.Title"] // ""),
+        type:  (.fields["System.WorkItemType"] // "")
+    }'
+}
+
 azdo_resolve_time_field() {
     local work_item_id="$1"
 

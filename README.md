@@ -2,7 +2,7 @@
   <img src="images/twk_banner.png" alt="TWAK Banner" width="100%" />
 </p>
 
-<h1 align="center">TWAK - Time Worked and Committed</h1>
+<h1 align="center">TWAK - Timed Worked and Committed</h1>
 
 <p align="center">
   A lightweight CLI for tracking time against Azure DevOps work items, directly from the terminal.
@@ -81,9 +81,17 @@ twk commit
 
 ## Commands
 
-### `twk init`
+### `twk init [--global]`
 
-Configures your Azure DevOps connection. You will be prompted for:
+Configures your Azure DevOps connection.
+
+By default, `twk init` writes a **project-local** config to `.twk/config` in the current directory. Pass `--global` to write the global config at `~/.config/twk/config` instead.
+
+When `twk` runs, it walks up from the current working directory looking for `.twk/config` and uses the first one it finds. If none is found, it falls back to the global config. This lets you keep different Azure DevOps connections per project (e.g. different orgs, different time fields) and a default for everything else.
+
+If the local config is created inside a git repository, `twk` appends `.twk/` to `.gitignore` (creating the file if needed) so your Personal Access Token doesn't get committed. A reminder is printed either way - review the change before pushing.
+
+You will be prompted for:
 
 - **Organisation** - your Azure DevOps org name (e.g. `myorg`)
 - **Project** - the project containing your boards (e.g. `MyProject`)
@@ -95,9 +103,12 @@ Configures your Azure DevOps connection. You will be prompted for:
 - **State for pause** - the AzDO state name to use with `--state` on pause (default: `Paused`)
 - **State for end --done** - the AzDO state name to use with `--done` (default: `Done`)
 
-Configuration is stored at `~/.config/twk/config` with restrictive file permissions (`600`).
+Configuration is stored at `.twk/config` (local) or `~/.config/twk/config` (global) with restrictive file permissions (`600`) and directory permissions (`700`).
+
+**Project-local init (default):**
 
 ```
+$ cd ~/Projects/Platform
 $ twk init
   _________      __   _____   ____  __.
  /\__  ___/\    /  \ /  _  \ |    |/ _|
@@ -107,7 +118,7 @@ $ twk init
                            \/        \/
      Time Worked and Committed
 
-  Azure DevOps Configuration
+  Azure DevOps Configuration (local: /home/user/Projects/Platform)
 
 Organisation (e.g. myorg): contoso
 Project (e.g. MyProject): Platform
@@ -128,6 +139,25 @@ Leave blank to skip state updates for that action.
 State for start (default: Active): Doing
 State for pause (default: Paused):
 State for end --done (default: Done):
+
+Configuration saved to /home/user/Projects/Platform/.twk/config
+
+Added '.twk/' to /home/user/Projects/Platform/.gitignore to keep your PAT out of git.
+Reminder: review and commit the .gitignore change before pushing.
+
+Testing connection...
+Connected successfully.
+```
+
+**Global init (`--global`):**
+
+```
+$ twk init --global
+  ...banner...
+
+  Azure DevOps Configuration (global)
+
+  ...prompts...
 
 Configuration saved to /home/user/.config/twk/config
 Testing connection...
@@ -169,7 +199,7 @@ Pauses an active timing session. The elapsed time so far is preserved - you can 
 
 Use `--state` to update the work item state in Azure DevOps (e.g. `--state Paused`).
 
-The same task resolution modes apply (ID, title match, or interactive).
+The same task resolution modes apply (ID, title match, or interactive). When you omit the task, the interactive picker only lists currently **running** sessions rather than the full sprint - so you don't have to guess which work item still has a live timer. If only one session is running, it's selected automatically.
 
 ```
 $ twk pause 48210 --state Paused
@@ -184,6 +214,8 @@ Paused #48210 (01:34:12 tracked)
 Ends a timing session on a work item. The session is finalised and ready to commit.
 
 You can end a work item that is either running or paused. By default, ending a session does not change the work item state. Use `--state` to set the state explicitly.
+
+When the task is omitted, the interactive picker only lists **running or paused** sessions. Already-ended sessions and the rest of the sprint are excluded. A single match auto-selects.
 
 ```
 $ twk end 48210
@@ -214,21 +246,71 @@ $ twk done 48215 --state "Code Review"
 
 ---
 
+### `twk undo [task] [--state <state>]`
+
+Removes the most recent event (`start`, `resume`, `pause`, or `end`) from a session file. Use this when you make a typo - for example, ending a session when you meant to pause it.
+
+If undoing the last remaining event leaves the session empty, the session file is removed.
+
+The same task resolution modes apply (ID, title match, or interactive). When the task is omitted, the interactive picker only lists existing sessions (any state) rather than the full sprint. A single match auto-selects. Use `--state` to also update the work item state in Azure DevOps.
+
+```
+$ twk end 48210
+Ended #48210 (03:22:45 total)
+
+$ twk undo 48210
+Undid 'end' on #48210 (now running)
+
+$ twk pause 48210
+Paused #48210 (03:25:10 tracked)
+
+$ twk undo 48210 --state Doing
+Undid 'pause' on #48210 (now running)
+  State set to Doing
+```
+
+---
+
+### `twk cancel [task] [--state <state>]`
+
+Discards an uncommitted local session. Use this when you started tracking the wrong work item, or left a timer running by mistake.
+
+The session file is archived to `~/.local/share/twk/sessions/cancelled/` for audit - it is not silently deleted. Nothing is pushed to Azure DevOps.
+
+When the task is omitted, the interactive picker only lists existing sessions (any state) rather than the full sprint. A single match auto-selects.
+
+Use `--state` to also revert the work item state (e.g. back to `To Do`).
+
+```
+$ twk cancel 48210
+Cancelled #48210 (02:15:00 discarded)
+
+$ twk cancel 48215 --state "To Do"
+Cancelled #48215 (00:45:30 discarded)
+  State set to To Do
+```
+
+---
+
 ### `twk status`
 
-Displays all uncommitted time entries with their current state and accumulated duration.
+Shows which config is active (and its scope) followed by all uncommitted time entries with their work item title, current state, and accumulated duration.
+
+Titles are cached to a sidecar `.meta` file the first time you `twk start <id>`, so `status` itself stays offline. Titles are truncated to 40 characters with `...` if longer. Sessions started before this caching landed (or while you were offline) will show `(no title cached)`; resume them once with `twk start <id>` while online to backfill the title.
 
 ```
 $ twk status
+Config: /home/user/Projects/Platform/.twk/config (local scope)
+
 Uncommitted time entries:
-─────────────────────────────────────────────────
-  ID       State      Time         Hours
-─────────────────────────────────────────────────
-  #48210   ended      03:22:45     3.38h
-  #48215   running    00:45:30     .75h
-  #48220   paused     01:10:00     1.16h
-─────────────────────────────────────────────────
-  Total               05:18:15     5.30h
+─────────────────────────────────────────────────────────────────────────────────
+  ID       Title                                    State      Time         Hours
+─────────────────────────────────────────────────────────────────────────────────
+  #48210   Implement login button                   ended      03:22:45     3.38h
+  #48215   Refactor authentication middleware to... running    00:45:30     .75h
+  #48220   Fix flaky integration test on CI         paused     01:10:00     1.16h
+─────────────────────────────────────────────────────────────────────────────────
+  Total                                             05:18:15     5.30h
 ```
 
 ---
@@ -272,21 +354,27 @@ Displays usage information.
 
 ```
 $ twk help
-twk - Time Worked and Committed
-
 Usage:
-    twk init                    Configure Azure DevOps connection
+    twk init [--global]         Configure Azure DevOps connection
     twk start [task]            Start timing a work item
     twk pause [task]            Pause timing a work item
     twk end [task]              Stop timing a work item
     twk done [task]             Mark a work item as done
+    twk undo [task]             Undo the last event on a session
+    twk cancel [task]           Discard an uncommitted session
     twk status                  View uncommitted time entries
     twk commit                  Push time entries to Azure DevOps
     twk version                 Show version
 
 Arguments:
-    [task]  Work item ID, partial title, or omit for interactive picker
+    [task]    Work item ID, partial title, or omit for interactive picker
+
+Options:
+    --global  (init only) Write to the global config rather than a project-local one
+    --state   (start, pause, end, done, undo, cancel) Set the AzDO work item state
 ```
+
+Pass `--help` (or `-h`) to any subcommand for detailed help on that command (e.g. `twk start --help`).
 
 ---
 
@@ -339,16 +427,23 @@ twk status            # See everything at a glance
 ## Project Structure
 
 ```
-twk/
+TWAK/
 ├── bin/
 │   └── twk              # Entry point and command router
 ├── lib/
-│   ├── config.sh        # Configuration management and init command
+│   ├── config.sh        # Local/global config resolution and init command
 │   ├── azdo.sh          # Azure DevOps REST API integration
 │   ├── resolve.sh       # Work item resolution (ID, title, interactive)
-│   ├── session.sh       # Local session tracking and start/pause/end commands
-│   └── display.sh       # Formatting, status output, and commit command
-├── install.sh           # Symlink installer
+│   ├── session.sh       # Session events, start/pause/end/undo/cancel commands
+│   ├── display.sh       # Formatting, status output, and commit command
+│   ├── help.sh          # Per-subcommand --help text
+│   └── banner.sh        # ASCII banner
+├── man/
+│   └── twk.1            # Man page
+├── images/              # README assets
+├── install.sh           # Local installer (symlinks bin/twk to ~/.local/bin)
+├── install-remote.sh    # Curl-pipe-bash installer used by the one-liner
+├── LICENSE
 └── README.md
 ```
 
@@ -356,12 +451,18 @@ twk/
 
 ## Data Storage
 
-| Path                                         | Purpose                          | Permissions |
-|----------------------------------------------|----------------------------------|-------------|
-| `~/.config/twk/config`                       | Azure DevOps connection settings | `600`       |
-| `~/.config/twk/` (directory)                 | Configuration directory          | `700`       |
-| `~/.local/share/twk/sessions/<id>.session`   | Active time tracking sessions    | Default     |
-| `~/.local/share/twk/sessions/committed/`     | Archived committed sessions      | Default     |
+| Path                                         | Purpose                                              | Permissions |
+|----------------------------------------------|------------------------------------------------------|-------------|
+| `<project>/.twk/config`                      | Project-local AzDO connection settings (preferred)   | `600`       |
+| `<project>/.twk/` (directory)                | Project-local config directory                       | `700`       |
+| `~/.config/twk/config`                       | Global AzDO connection settings (fallback)           | `600`       |
+| `~/.config/twk/` (directory)                 | Global config directory                              | `700`       |
+| `~/.local/share/twk/sessions/<id>.session`   | Active time tracking sessions                        | Default     |
+| `~/.local/share/twk/sessions/<id>.meta`      | Cached work item title and type (JSON)               | Default     |
+| `~/.local/share/twk/sessions/committed/`     | Archived committed sessions (with their `.meta`)     | Default     |
+| `~/.local/share/twk/sessions/cancelled/`     | Archived cancelled sessions (with their `.meta`)     | Default     |
+
+Local configs are discovered by walking up from the current working directory. The first `.twk/config` found is used; otherwise twk falls back to the global config.
 
 ### Session File Format
 
@@ -380,8 +481,9 @@ Each line is an `event|unix_timestamp` pair. This format is human-readable, easy
 
 ## Security
 
-- Your Personal Access Token is stored locally in `~/.config/twk/config` with `600` permissions (owner read/write only)
-- The config directory is set to `700` (owner access only)
+- Your Personal Access Token is stored locally in either the project-local `.twk/config` or the global `~/.config/twk/config`, both with `600` permissions (owner read/write only)
+- Both config directories are set to `700` (owner access only)
+- When you run `twk init` (project-local) inside a git repository, `twk` automatically appends `.twk/` to `.gitignore` to prevent the PAT from being committed - review the change before pushing
 - The PAT is transmitted over HTTPS via Basic authentication to the Azure DevOps REST API
 - No credentials are logged, cached, or transmitted to any third-party service
 
@@ -420,7 +522,7 @@ Generate a PAT at: `https://dev.azure.com/{your-org}/_usersettings/tokens`
 ## Troubleshooting
 
 **"twk not initialised. Run 'twk init' first."**
-Run `twk init` to set up your Azure DevOps connection.
+No `.twk/config` was found in the current directory or any parent, and no global config exists at `~/.config/twk/config`. Run `twk init` to create a project-local config, or `twk init --global` to create a global one.
 
 **"connection test failed"**
 Check that your organisation, project, and PAT are correct. Ensure the PAT has not expired and has the required Work Items scope.

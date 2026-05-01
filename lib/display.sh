@@ -12,24 +12,42 @@ seconds_to_hours() {
     echo "scale=2; ${total_seconds} / 3600" | bc
 }
 
+readonly STATUS_TITLE_WIDTH=40
+
+truncate_title() {
+    local title="$1"
+    local max_len="${2:-${STATUS_TITLE_WIDTH}}"
+    if [[ "${#title}" -gt "${max_len}" ]]; then
+        printf '%s...' "${title:0:$((max_len - 3))}"
+    else
+        printf '%s' "${title}"
+    fi
+}
+
 cmd_status() {
     config_require
 
     local session_files
     session_files="$(session_list_uncommitted)"
 
+    echo "Config: $(config_active_file) ($(config_active_scope) scope)"
+
     if [[ -z "${session_files}" ]]; then
         echo "No uncommitted time entries."
         return
     fi
 
+    local rule
+    rule="$(printf '─%.0s' $(seq 1 81))"
+
+    echo ""
     echo "Uncommitted time entries:"
-    echo "─────────────────────────────────────────────────"
-    printf "  %-8s %-10s %-12s %s\n" "ID" "State" "Time" "Hours"
-    echo "─────────────────────────────────────────────────"
+    echo "${rule}"
+    printf "  %-8s %-${STATUS_TITLE_WIDTH}s %-10s %-12s %s\n" "ID" "Title" "State" "Time" "Hours"
+    echo "${rule}"
 
     local total_seconds=0
-    local work_item_id state elapsed_seconds hours_decimal
+    local work_item_id state elapsed_seconds hours_decimal title
 
     while read -r session_file; do
         work_item_id="$(session_work_item_id_from_path "${session_file}")"
@@ -39,16 +57,22 @@ cmd_status() {
 
         hours_decimal="$(seconds_to_hours "${elapsed_seconds}")"
 
-        printf "  #%-7s %-10s %-12s %sh\n" \
+        title="$(session_read_meta_title "${work_item_id}")"
+        if [[ -z "${title}" ]]; then
+            title="(no title cached)"
+        fi
+
+        printf "  #%-7s %-${STATUS_TITLE_WIDTH}s %-10s %-12s %sh\n" \
             "${work_item_id}" \
+            "$(truncate_title "${title}")" \
             "${state}" \
             "$(format_duration "${elapsed_seconds}")" \
             "${hours_decimal}"
     done <<< "${session_files}"
 
-    echo "─────────────────────────────────────────────────"
-    printf "  %-8s %-10s %-12s %sh\n" \
-        "Total" "" \
+    echo "${rule}"
+    printf "  %-8s %-${STATUS_TITLE_WIDTH}s %-10s %-12s %sh\n" \
+        "Total" "" "" \
         "$(format_duration "${total_seconds}")" \
         "$(seconds_to_hours "${total_seconds}")"
 }

@@ -17,6 +17,46 @@ session_file_path() {
     echo "${TWK_DATA_DIR}/${work_item_id}.session"
 }
 
+session_meta_file_path() {
+    local work_item_id="$1"
+    validate_work_item_id "${work_item_id}" || return 1
+    echo "${TWK_DATA_DIR}/${work_item_id}.meta"
+}
+
+session_meta_exists() {
+    local work_item_id="$1"
+    [[ -f "$(session_meta_file_path "${work_item_id}")" ]]
+}
+
+session_cache_meta() {
+    local work_item_id="$1"
+    if session_meta_exists "${work_item_id}"; then
+        return 0
+    fi
+
+    local meta_json
+    meta_json="$(azdo_fetch_work_item_meta "${work_item_id}" 2>/dev/null)" || return 1
+
+    if [[ -z "${meta_json}" ]]; then
+        return 1
+    fi
+
+    session_ensure_data_dir
+    printf '%s\n' "${meta_json}" > "$(session_meta_file_path "${work_item_id}")"
+}
+
+session_read_meta_title() {
+    local work_item_id="$1"
+    local meta_file
+    meta_file="$(session_meta_file_path "${work_item_id}")" || return 1
+
+    if [[ ! -f "${meta_file}" ]]; then
+        return
+    fi
+
+    jq -r '.title // ""' "${meta_file}" 2>/dev/null
+}
+
 session_ensure_data_dir() {
     mkdir -p "${TWK_DATA_DIR}"
 }
@@ -37,7 +77,7 @@ session_read_state() {
     fi
 
     local last_event
-    last_event="$(tail -1 "${session_file}" | cut -d'|' -f1)"
+    last_event="$(tail -n 1 "${session_file}" | cut -d'|' -f1)"
 
     case "${last_event}" in
         start|resume) echo "${STATE_RUNNING}" ;;
@@ -107,6 +147,19 @@ session_list_uncommitted() {
     printf '%s\n' "${files[@]}"
 }
 
+session_archive_meta() {
+    local work_item_id="$1"
+    local archive_dir="$2"
+    local timestamp="$3"
+
+    local meta_file
+    meta_file="$(session_meta_file_path "${work_item_id}")" || return 0
+
+    if [[ -f "${meta_file}" ]]; then
+        mv "${meta_file}" "${archive_dir}/${work_item_id}_${timestamp}.meta"
+    fi
+}
+
 session_mark_committed() {
     local work_item_id="$1"
     local session_file
@@ -118,6 +171,60 @@ session_mark_committed() {
     local timestamp
     timestamp="$(date +%s)"
     mv "${session_file}" "${committed_dir}/${work_item_id}_${timestamp}.session"
+    session_archive_meta "${work_item_id}" "${committed_dir}" "${timestamp}"
+}
+
+session_mark_cancelled() {
+    local work_item_id="$1"
+    local session_file
+    session_file="$(session_file_path "${work_item_id}")" || return 1
+
+    local cancelled_dir="${TWK_DATA_DIR}/cancelled"
+    mkdir -p "${cancelled_dir}"
+
+    local timestamp
+    timestamp="$(date +%s)"
+    mv "${session_file}" "${cancelled_dir}/${work_item_id}_${timestamp}.session"
+    session_archive_meta "${work_item_id}" "${cancelled_dir}" "${timestamp}"
+}
+
+session_pop_last_event() {
+    local work_item_id="$1"
+    local session_file
+    session_file="$(session_file_path "${work_item_id}")" || return 1
+
+    # Distinct exit codes:
+    #   2 - session file does not exist
+    #   3 - session file exists but contains no events
+    if [[ ! -f "${session_file}" ]]; then
+        return 2
+    fi
+
+    if [[ ! -s "${session_file}" ]]; then
+        rm -f "${session_file}"
+        return 3
+    fi
+
+    local last_event
+    # awk handles missing-trailing-newline correctly; END $1 is the last record's first field
+    last_event="$(awk -F'|' 'END { print $1 }' "${session_file}")"
+    if [[ -z "${last_event}" ]]; then
+        rm -f "${session_file}"
+        return 3
+    fi
+
+    local tmp
+    tmp="$(mktemp "${session_file}.XXXXXX")" || return 1
+    # Drop the last line; works regardless of trailing newline.
+    awk 'NR>1 { print prev } { prev=$0 }' "${session_file}" > "${tmp}"
+
+    if [[ -s "${tmp}" ]]; then
+        mv "${tmp}" "${session_file}"
+    else
+        rm -f "${tmp}" "${session_file}"
+    fi
+
+    printf '%s\n' "${last_event}"
 }
 
 session_work_item_id_from_path() {
@@ -182,6 +289,8 @@ cmd_start() {
         return 1
     fi
 
+    session_cache_meta "${work_item_id}" || true
+
     if [[ "${current_state}" == "${STATE_PAUSED}" ]]; then
         session_append "${work_item_id}" "resume"
         echo "Resumed tracking #${work_item_id}"
@@ -201,7 +310,7 @@ cmd_pause() {
     target_state="$(parse_state_flag "$@")"
 
     local work_item_id
-    work_item_id="$(resolve_work_item "${query}")" || return 1
+    work_item_id="$(resolve_for_session_action "${query}" "${STATE_RUNNING}" "pause")" || return 1
 
     local current_state
     current_state="$(session_read_state "${work_item_id}")"
@@ -228,7 +337,7 @@ cmd_end() {
     target_state="$(parse_state_flag "$@")"
 
     local work_item_id
-    work_item_id="$(resolve_work_item "${query}")" || return 1
+    work_item_id="$(resolve_for_session_action "${query}" "${STATE_RUNNING}|${STATE_PAUSED}" "end")" || return 1
 
     local current_state
     current_state="$(session_read_state "${work_item_id}")"
@@ -265,6 +374,67 @@ cmd_done() {
 
     local work_item_id
     work_item_id="$(resolve_work_item "${query}")" || return 1
+
+    apply_state_change "${work_item_id}" "${target_state}"
+}
+
+cmd_cancel() {
+    config_require
+    local query
+    query="$(parse_query_arg "$@")"
+    local target_state
+    target_state="$(parse_state_flag "$@")"
+
+    local work_item_id
+    work_item_id="$(resolve_for_session_action "${query}" "${STATE_RUNNING}|${STATE_PAUSED}|${STATE_ENDED}" "cancel")" || return 1
+
+    if ! session_exists "${work_item_id}"; then
+        echo "Error: no session for work item #${work_item_id}." >&2
+        return 1
+    fi
+
+    local elapsed_seconds
+    elapsed_seconds="$(session_calculate_elapsed_seconds "${work_item_id}")"
+
+    session_mark_cancelled "${work_item_id}"
+    echo "Cancelled #${work_item_id} ($(format_duration "${elapsed_seconds}") discarded)"
+
+    apply_state_change "${work_item_id}" "${target_state}"
+}
+
+cmd_undo() {
+    config_require
+    local query
+    query="$(parse_query_arg "$@")"
+    local target_state
+    target_state="$(parse_state_flag "$@")"
+
+    local work_item_id
+    work_item_id="$(resolve_for_session_action "${query}" "${STATE_RUNNING}|${STATE_PAUSED}|${STATE_ENDED}" "undo")" || return 1
+
+    if ! session_exists "${work_item_id}"; then
+        echo "Error: no session for work item #${work_item_id}." >&2
+        return 1
+    fi
+
+    local popped_event pop_status=0
+    popped_event="$(session_pop_last_event "${work_item_id}")" || pop_status=$?
+    if [[ "${pop_status}" -ne 0 ]]; then
+        case "${pop_status}" in
+            2) echo "Error: no session for work item #${work_item_id}." >&2 ;;
+            3) echo "Error: nothing to undo for #${work_item_id} (session is empty)." >&2 ;;
+            *) echo "Error: failed to undo last event for #${work_item_id}." >&2 ;;
+        esac
+        return 1
+    fi
+
+    if session_exists "${work_item_id}"; then
+        local new_state
+        new_state="$(session_read_state "${work_item_id}")"
+        echo "Undid '${popped_event}' on #${work_item_id} (now ${new_state})"
+    else
+        echo "Undid '${popped_event}' on #${work_item_id} (session removed)"
+    fi
 
     apply_state_change "${work_item_id}" "${target_state}"
 }

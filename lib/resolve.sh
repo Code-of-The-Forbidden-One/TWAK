@@ -14,6 +14,111 @@ resolve_work_item() {
     resolve_by_title "${query}"
 }
 
+resolve_for_session_action() {
+    local query="${1:-}"
+    local state_filter="$2"
+    local action_label="$3"
+
+    if [[ -n "${query}" ]]; then
+        resolve_work_item "${query}"
+        return
+    fi
+
+    resolve_session_interactive "${state_filter}" "${action_label}"
+}
+
+resolve_session_interactive() {
+    local state_filter="$1"
+    local action_label="$2"
+
+    local session_files
+    session_files="$(session_list_uncommitted)"
+    if [[ -z "${session_files}" ]]; then
+        echo "Error: no uncommitted sessions to ${action_label}." >&2
+        return 1
+    fi
+
+    local items=()
+    local session_file id state title elapsed_seconds elapsed
+    while read -r session_file; do
+        id="$(session_work_item_id_from_path "${session_file}")"
+        state="$(session_read_state "${id}")"
+
+        if [[ -n "${state_filter}" ]] && ! [[ "${state}" =~ ^(${state_filter})$ ]]; then
+            continue
+        fi
+
+        elapsed_seconds="$(session_calculate_elapsed_seconds "${id}")"
+        elapsed="$(format_duration "${elapsed_seconds}")"
+        title="$(session_read_meta_title "${id}")"
+        [[ -z "${title}" ]] && title="(no title cached)"
+
+        items+=("$(printf '%s\t%s\t%s\t%s' "${id}" "${state}" "${elapsed}" "${title}")")
+    done <<< "${session_files}"
+
+    if [[ ${#items[@]} -eq 0 ]]; then
+        echo "Error: no sessions to ${action_label}." >&2
+        return 1
+    fi
+
+    if [[ ${#items[@]} -eq 1 ]]; then
+        printf '%s\n' "${items[0]}" | cut -f1
+        return
+    fi
+
+    if command -v fzf &> /dev/null; then
+        resolve_session_with_fzf "${action_label}" "${items[@]}"
+    else
+        resolve_session_with_numbered_list "${action_label}" "${items[@]}"
+    fi
+}
+
+resolve_session_with_fzf() {
+    local action_label="$1"
+    shift
+    local items=("$@")
+
+    local display_list
+    display_list="$(printf '%s\n' "${items[@]}" \
+        | awk -F'\t' '{ printf "#%-7s %-10s %-12s %s\n", $1, $2, $3, $4 }')"
+
+    local selected
+    selected="$(echo "${display_list}" | fzf --prompt="Select session to ${action_label}: " --height=20 --reverse)"
+
+    if [[ -z "${selected}" ]]; then
+        echo "Error: no session selected." >&2
+        return 1
+    fi
+
+    echo "${selected}" | grep -oP '(?<=#)\d+'
+}
+
+resolve_session_with_numbered_list() {
+    local action_label="$1"
+    shift
+    local items=("$@")
+
+    echo "Sessions available to ${action_label}:" >&2
+    local index=1
+    local id state elapsed title item
+    for item in "${items[@]}"; do
+        IFS=$'\t' read -r id state elapsed title <<< "${item}"
+        printf "  %2d) #%-7s %-10s %-12s %s\n" "${index}" "${id}" "${state}" "${elapsed}" "${title}" >&2
+        index=$((index + 1))
+    done
+
+    local total=${#items[@]}
+    local selection
+    read -rp "Select [1-${total}]: " selection
+
+    if [[ -z "${selection}" ]] || [[ "${selection}" -lt 1 ]] || [[ "${selection}" -gt "${total}" ]]; then
+        echo "Error: invalid selection." >&2
+        return 1
+    fi
+
+    printf '%s\n' "${items[$((selection - 1))]}" | cut -f1
+}
+
 resolve_by_title() {
     local search_term="$1"
     local work_items_json

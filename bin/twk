@@ -39,17 +39,25 @@ print_usage() {
     echo ""
     cat <<'USAGE'
 Usage:
-    twk init                    Configure Azure DevOps connection
+    twk init [--global]         Configure Azure DevOps connection
     twk start [task]            Start timing a work item
     twk pause [task]            Pause timing a work item
     twk end [task]              Stop timing a work item
     twk done [task]             Mark a work item as done
+    twk undo [task]             Undo the last event on a session
+    twk cancel [task]           Discard an uncommitted session
     twk status                  View uncommitted time entries
     twk commit                  Push time entries to Azure DevOps
     twk version                 Show version
 
 Arguments:
-    [task]  Work item ID, partial title, or omit for interactive picker
+    [task]    Work item ID, partial title, or omit for interactive picker
+
+Options:
+    --global  (init only) Write to the global config rather than a project-local one
+    --state   Set the AzDO work item state. Applies to start, pause, end, undo, and
+              cancel (which all touch sessions). On 'done' (state-only, no session),
+              this overrides the configured done-state.
 USAGE
 }
 
@@ -57,7 +65,7 @@ main() {
     local command="${1:-}"
     shift || true
 
-    if is_help_flag "${1:-}"; then
+    if contains_help_flag "$@"; then
         show_subcommand_help "${command}"
         return
     fi
@@ -68,6 +76,8 @@ main() {
         pause)   cmd_pause "$@" ;;
         end)     cmd_end "$@" ;;
         done)    cmd_done "$@" ;;
+        undo)    cmd_undo "$@" ;;
+        cancel)  cmd_cancel "$@" ;;
         status)  cmd_status "$@" ;;
         commit)  cmd_commit "$@" ;;
         version) echo "twk ${TWK_VERSION}" ;;

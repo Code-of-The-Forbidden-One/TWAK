@@ -25,12 +25,28 @@ your board in one push.
 Multiple work items can be tracked in parallel for easy context switching.
 .SH COMMANDS
 .TP
-.B init
+.B init \fR[\fB\-\-global\fR]
 Configure the Azure DevOps connection. Prompts for organisation, project,
-team, personal access token, and time tracking field names. Stores
-credentials at
-.I ~/.config/twk/config
-with restrictive permissions.
+team, personal access token, and time tracking field names.
+.IP
+By default, writes a project-local config to
+.I .twk/config
+in the current directory. When twk runs, it walks up from the current
+directory looking for
+.IR .twk/config ;
+if none is found, it falls back to the global config at
+.IR ~/.config/twk/config .
+Use
+.B \-\-global
+to write directly to the global config instead.
+.IP
+If the project-local config is created inside a git repository, twk
+appends
+.I .twk/
+to
+.I .gitignore
+(creating the file if needed) to keep your Personal Access Token out
+of version control.
 .TP
 .B start \fR[\fItask\fR] [\fB\-\-state\fR \fIstate\fR]
 Start timing a work item. If the item is paused, resumes it instead.
@@ -43,12 +59,20 @@ Pause an active timing session. Elapsed time is preserved.
 Use
 .B \-\-state
 to set the work item state in Azure DevOps (e.g. Paused).
+When
+.I task
+is omitted, the interactive picker only lists currently running
+sessions; a single match is selected automatically.
 .TP
 .B end \fR[\fItask\fR] [\fB\-\-state\fR \fIstate\fR]
 End a timing session. The item can be running or paused.
 Use
 .B \-\-state
 to set the work item state in Azure DevOps (e.g. Done).
+When
+.I task
+is omitted, the interactive picker only lists running or paused
+sessions; a single match is selected automatically.
 .TP
 .B done \fR[\fItask\fR] [\fB\-\-state\fR \fIstate\fR]
 Set the work item state in Azure DevOps without affecting any active
@@ -56,8 +80,40 @@ timer session. Uses the configured done state by default, or a specific
 state via
 .BR \-\-state .
 .TP
+.B undo \fR[\fItask\fR] [\fB\-\-state\fR \fIstate\fR]
+Remove the most recent event (start, resume, pause, or end) from the
+session file. Useful for recovering from a typo such as ending a
+session when you meant to pause it. If removing the event leaves
+the session empty, the session file is deleted. Use
+.B \-\-state
+to also update the work item state in Azure DevOps.
+When
+.I task
+is omitted, the interactive picker only lists existing sessions; a
+single match is selected automatically.
+.TP
+.B cancel \fR[\fItask\fR] [\fB\-\-state\fR \fIstate\fR]
+Discard an uncommitted local session without pushing anything to
+Azure DevOps. The session file is archived to
+.I ~/.local/share/twk/sessions/cancelled/
+for audit. Use
+.B \-\-state
+to also revert the work item state in Azure DevOps.
+When
+.I task
+is omitted, the interactive picker only lists existing sessions; a
+single match is selected automatically.
+.TP
 .B status
-Display all uncommitted time entries with elapsed time and decimal hours.
+Print the active config path and scope, followed by every uncommitted
+time entry with its cached title (truncated to 40 chars), current
+state, elapsed time, and decimal hours. Titles are cached on first
+.B "twk start <id>"
+to a sidecar
+.I .meta
+file, so
+.B status
+itself never hits the network.
 .TP
 .B commit
 Push accumulated time to the configured time field on each work item in
@@ -87,14 +143,43 @@ When no argument is given, an interactive picker is shown. If
 is installed it is used for fuzzy selection; otherwise a numbered list
 is displayed.
 .SH CONFIGURATION
+.B twk
+supports two configuration scopes: project-local and global.
+.PP
+.B Project-local
+configs live at
+.I .twk/config
+relative to a project root. On every command, twk walks up from
+the current working directory and uses the first
+.I .twk/config
+it finds. This lets you keep separate Azure DevOps connections per
+project (for example, different organisations or different time
+fields).
+.PP
+.B Global
+configs live at
+.IR ~/.config/twk/config .
+This config is used when no project-local config is found by walking
+up from the current directory.
+.PP
 Run
 .B twk init
-to create the configuration file at
-.IR ~/.config/twk/config .
-The file stores your Azure DevOps organisation, project, team,
-personal access token, and the field names used for time tracking
-(which may differ between Tasks and Features). The config directory
-is set to mode 700 and the config file to mode 600.
+to create a project-local config in the current directory, or
+.B twk init \-\-global
+to create the global config. Both files store your Azure DevOps
+organisation, project, team, personal access token, and the field
+names used for time tracking (which may differ between Tasks and
+Features). The config directory is set to mode 700 and the config
+file to mode 600.
+.PP
+When a project-local config is created inside a git repository,
+.B twk
+appends
+.I .twk/
+to
+.I .gitignore
+(creating the file if needed) to keep your Personal Access Token
+out of version control.
 .PP
 Your PAT requires the
 .B "Work Items (Read & Write)"
@@ -105,16 +190,34 @@ https://dev.azure.com/{your-org}/_usersettings/tokens
 .RE
 .SH FILES
 .TP
+.I ./.twk/config
+Project-local Azure DevOps connection settings. Discovered by walking
+up from the current working directory; takes precedence over the
+global config.
+.TP
 .I ~/.config/twk/config
-Azure DevOps connection settings.
+Global Azure DevOps connection settings. Used when no project-local
+config is found.
 .TP
 .I ~/.local/share/twk/sessions/<id>.session
 Active time tracking session files. Each file contains append-only
 events in the format
 .BR event|timestamp .
 .TP
+.I ~/.local/share/twk/sessions/<id>.meta
+Sidecar JSON file containing the cached work item title and type.
+Written on first
+.B "twk start <id>"
+and consumed by
+.B "twk status"
+so that command stays offline.
+.TP
 .I ~/.local/share/twk/sessions/committed/
 Archived sessions that have been committed to Azure DevOps.
+.TP
+.I ~/.local/share/twk/sessions/cancelled/
+Archived sessions that were discarded with
+.BR "twk cancel" .
 .SH ENVIRONMENT
 .B twk
 does not read any environment variables. All configuration is stored
@@ -160,6 +263,15 @@ Use title matching:
 .nf
 twk start "login bug"
 twk end "login bug"
+.fi
+.RE
+.PP
+Recover from mistakes before committing:
+.PP
+.RS
+.nf
+twk undo 12345
+twk cancel 12345
 .fi
 .RE
 .SH EXIT STATUS

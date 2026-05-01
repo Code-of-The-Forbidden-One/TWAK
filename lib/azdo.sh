@@ -14,15 +14,16 @@ azdo_api_request() {
     local body="${3:-}"
 
     local auth_header
-    auth_header="$(printf '%s' ":${TWK_PAT}" | base64)"
+    auth_header="$(printf '%s' ":${TWK_PAT}" | base64 -w 0)"
 
     local curl_args=(
         --silent
         --fail
         --show-error
+        --location
         --connect-timeout 10
         --max-time 30
-        -H @<(printf 'Authorization: Basic %s' "${auth_header}")
+        --header "Authorization: Basic ${auth_header}"
         --header "Content-Type: application/json-patch+json"
         --request "${method}"
     )
@@ -36,7 +37,7 @@ azdo_api_request() {
 
 azdo_test_connection() {
     local url
-    url="$(azdo_base_url)/_apis/projects?api-version=7.1"
+    url="https://dev.azure.com/${TWK_ORGANIZATION}/_apis/projects?api-version=7.1"
     azdo_api_request "GET" "${url}" > /dev/null 2>&1
 }
 

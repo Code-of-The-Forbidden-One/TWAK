@@ -44,8 +44,9 @@ EOF
 }
 
 cmd_init() {
-    echo "twk - Azure DevOps Configuration"
-    echo "================================="
+    print_banner
+    echo ""
+    echo "  Azure DevOps Configuration"
     echo ""
 
     local organization project team personal_access_token

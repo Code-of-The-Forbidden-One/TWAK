@@ -14,6 +14,7 @@ source "${TWK_LIB}/resolve.sh"
 source "${TWK_LIB}/session.sh"
 source "${TWK_LIB}/display.sh"
 source "${TWK_LIB}/help.sh"
+source "${TWK_LIB}/banner.sh"
 
 check_dependencies() {
     local missing=()
@@ -34,9 +35,9 @@ check_dependencies() {
 check_dependencies
 
 print_usage() {
+    print_banner
+    echo ""
     cat <<'USAGE'
-twk - Time Worked and Committed
-
 Usage:
     twk init                    Configure Azure DevOps connection
     twk start [task]            Start timing a work item

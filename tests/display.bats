@@ -193,6 +193,321 @@ setup() {
     assert_output_contains "02:00:00"
 }
 
+@test "normalise_description: strips HTML tags and collapses whitespace" {
+    run normalise_description "<div>Hello   world</div><br>second line"
+    assert_status 0
+    [[ "${output}" == "Hello world second line" ]] || { echo "got: ${output}"; return 1; }
+}
+
+@test "normalise_description: decodes common HTML entities" {
+    run normalise_description "Tom &amp; Jerry &lt;span&gt; &quot;ok&quot;"
+    assert_status 0
+    [[ "${output}" == 'Tom & Jerry <span> "ok"' ]] || { echo "got: ${output}"; return 1; }
+}
+
+@test "normalise_description: empty input returns '(no description)'" {
+    run normalise_description ""
+    assert_status 0
+    [[ "${output}" == "(no description)" ]] || { echo "got: ${output}"; return 1; }
+}
+
+@test "normalise_description: tag-only input collapses to '(no description)'" {
+    run normalise_description "<div></div><br>"
+    assert_status 0
+    [[ "${output}" == "(no description)" ]] || { echo "got: ${output}"; return 1; }
+}
+
+@test "normalise_description: long input truncates with '...' suffix" {
+    local long
+    long="$(printf 'a%.0s' $(seq 1 300))"
+    run normalise_description "${long}"
+    assert_status 0
+    # First 240 chars of input + 3-char suffix.
+    [[ "${#output}" -eq 243 ]] || { echo "len=${#output}"; return 1; }
+    [[ "${output}" == *"..." ]] || { echo "no ... suffix"; return 1; }
+}
+
+@test "render_list_item: summary row has ID, title, state, priority, est, done, assigned" {
+    require_binary jq
+
+    export TWK_TIME_FIELD_TASK="Custom.TaskTime"
+    export TWK_TIME_FIELD_FEATURE="Custom.FeatureTime"
+
+    local item='{"id":42,"fields":{
+        "System.Title":"Login bug",
+        "System.WorkItemType":"Task",
+        "System.State":"Active",
+        "System.Description":"<p>Fix the login</p>",
+        "System.AssignedTo":{"displayName":"Luke McCann","uniqueName":"luke@example.com"},
+        "Microsoft.VSTS.Common.Priority":2,
+        "Microsoft.VSTS.Scheduling.OriginalEstimate":4.5,
+        "Custom.TaskTime":1.25
+    }}'
+
+    run render_list_item "${item}"
+    assert_status 0
+
+    # Summary row is the first line.
+    local first_line
+    first_line="$(printf '%s\n' "${output}" | head -n1)"
+    [[ "${first_line}" == *"#42"* ]]          || { echo "no ID: ${first_line}"; return 1; }
+    [[ "${first_line}" == *"Login bug"* ]]    || { echo "no title: ${first_line}"; return 1; }
+    [[ "${first_line}" == *"Active"* ]]       || { echo "no state: ${first_line}"; return 1; }
+    [[ "${first_line}" == *"4.5h"* ]]         || { echo "no est: ${first_line}"; return 1; }
+    [[ "${first_line}" == *"1.25h"* ]]        || { echo "no done: ${first_line}"; return 1; }
+    [[ "${first_line}" == *"Luke McCann"* ]]  || { echo "no assignee: ${first_line}"; return 1; }
+
+    # Description is on a subsequent line, indented.
+    [[ "${first_line}" != *"Fix the login"* ]] || { echo "desc on row: ${first_line}"; return 1; }
+    assert_output_contains "Fix the login"
+}
+
+@test "render_list_item: unassigned items render '-' in assigned column" {
+    require_binary jq
+
+    export TWK_TIME_FIELD_TASK="Custom.TaskTime"
+    export TWK_TIME_FIELD_FEATURE="Custom.FeatureTime"
+
+    local item='{"id":70,"fields":{
+        "System.Title":"Orphan",
+        "System.WorkItemType":"Task",
+        "System.State":"New"
+    }}'
+
+    run render_list_item "${item}"
+    assert_status 0
+    local first_line
+    first_line="$(printf '%s\n' "${output}" | head -n1)"
+    # Last visible token in the row should include a '-' for assigned.
+    # We already test missing pri/est/done elsewhere — here we specifically
+    # confirm the row doesn't contain a stray name.
+    [[ "${first_line}" != *"@"* ]] || { echo "row contains @: ${first_line}"; return 1; }
+    [[ "${first_line}" == *"-"* ]] || { echo "no - placeholder: ${first_line}"; return 1; }
+}
+
+@test "render_list_item: long assignee name truncates at LIST_ASSIGNED_WIDTH with '...'" {
+    require_binary jq
+
+    export TWK_TIME_FIELD_TASK="Custom.TaskTime"
+    export TWK_TIME_FIELD_FEATURE="Custom.FeatureTime"
+
+    local item='{"id":71,"fields":{
+        "System.Title":"With long owner",
+        "System.WorkItemType":"Task",
+        "System.State":"Active",
+        "System.AssignedTo":{"displayName":"Maximilian Bartholomew Cunningham"}
+    }}'
+
+    run render_list_item "${item}"
+    assert_status 0
+    local first_line
+    first_line="$(printf '%s\n' "${output}" | head -n1)"
+    [[ "${first_line}" == *"Maximilian"* ]]               || { echo "no head: ${first_line}"; return 1; }
+    [[ "${first_line}" == *"..."* ]]                       || { echo "no truncation: ${first_line}"; return 1; }
+    [[ "${first_line}" != *"Cunningham"* ]]                || { echo "tail not truncated: ${first_line}"; return 1; }
+}
+
+@test "render_list_item: missing priority/estimate/time render as '-'" {
+    require_binary jq
+
+    export TWK_TIME_FIELD_TASK="Custom.TaskTime"
+    export TWK_TIME_FIELD_FEATURE="Custom.FeatureTime"
+
+    local item='{"id":99,"fields":{
+        "System.Title":"Bare item",
+        "System.WorkItemType":"Task",
+        "System.State":"New"
+    }}'
+
+    run render_list_item "${item}"
+    assert_status 0
+
+    local first_line
+    first_line="$(printf '%s\n' "${output}" | head -n1)"
+    # Three '-' placeholders should appear in the summary row (Pri, Est, Done).
+    local dash_count
+    dash_count="$(grep -o -- '-' <<< "${first_line}" | wc -l)"
+    [[ "${dash_count}" -ge 3 ]] || { echo "got ${dash_count} dashes in: ${first_line}"; return 1; }
+
+    assert_output_contains "(no description)"
+}
+
+@test "render_list_item: Feature uses the feature time field for Done" {
+    require_binary jq
+
+    export TWK_TIME_FIELD_TASK="Custom.TaskTime"
+    export TWK_TIME_FIELD_FEATURE="Custom.FeatureTime"
+
+    local item='{"id":101,"fields":{
+        "System.Title":"Big feature",
+        "System.WorkItemType":"Feature",
+        "System.State":"Active",
+        "Custom.TaskTime":99,
+        "Custom.FeatureTime":12.5
+    }}'
+
+    run render_list_item "${item}"
+    assert_status 0
+    assert_output_contains "12.5h"
+    [[ "${output}" != *"99h"* ]] || { echo "should not have used task field; got: ${output}"; return 1; }
+}
+
+@test "render_list_item: long title truncates to 40 chars with '...' in summary row" {
+    require_binary jq
+
+    export TWK_TIME_FIELD_TASK="Custom.TaskTime"
+    export TWK_TIME_FIELD_FEATURE="Custom.FeatureTime"
+
+    local item='{"id":50,"fields":{
+        "System.Title":"This is an exceedingly long work item title that overflows the column",
+        "System.WorkItemType":"Task",
+        "System.State":"New"
+    }}'
+
+    run render_list_item "${item}"
+    assert_status 0
+    local first_line
+    first_line="$(printf '%s\n' "${output}" | head -n1)"
+    # Title truncated to first 37 chars + "..."
+    [[ "${first_line}" == *"This is an exceedingly long work item"* ]] || { echo "got: ${first_line}"; return 1; }
+    [[ "${first_line}" == *"..."* ]] || { echo "no truncation suffix: ${first_line}"; return 1; }
+    [[ "${first_line}" != *"overflows the column"* ]] || { echo "title not truncated: ${first_line}"; return 1; }
+}
+
+@test "render_list_item: description is indented under the summary row" {
+    require_binary jq
+
+    export TWK_TIME_FIELD_TASK="Custom.TaskTime"
+    export TWK_TIME_FIELD_FEATURE="Custom.FeatureTime"
+
+    local item='{"id":60,"fields":{
+        "System.Title":"With description",
+        "System.WorkItemType":"Task",
+        "System.State":"Active",
+        "System.Description":"Sub-line content here."
+    }}'
+
+    run render_list_item "${item}"
+    assert_status 0
+    # Second line should start with 11 leading spaces (LIST_DESC_INDENT).
+    local second_line
+    second_line="$(printf '%s\n' "${output}" | sed -n '2p')"
+    [[ "${second_line}" == "           Sub-line content here." ]] || { echo "got: '${second_line}'"; return 1; }
+}
+
+@test "cmd_list: rejects extra arguments" {
+    twk_write_fake_config
+    config_global_file() { printf '%s\n' "${TWK_CONFIG_DIR}/config"; }
+    config_find_local() { return 1; }
+
+    run cmd_list extra
+    assert_status 1
+    assert_output_contains "takes no arguments"
+}
+
+@test "cmd_list: errors when no current iteration" {
+    twk_write_fake_config
+    config_global_file() { printf '%s\n' "${TWK_CONFIG_DIR}/config"; }
+    config_find_local() { return 1; }
+
+    azdo_fetch_current_iteration() { printf '%s' '{"value":[]}'; }
+
+    run cmd_list
+    assert_status 1
+    assert_output_contains "no current iteration"
+}
+
+@test "cmd_list: prints 'No work items' when iteration has no items" {
+    twk_write_fake_config
+    config_global_file() { printf '%s\n' "${TWK_CONFIG_DIR}/config"; }
+    config_find_local() { return 1; }
+
+    azdo_fetch_current_iteration() {
+        printf '%s' '{"value":[{"id":"abc","name":"Sprint 1"}]}'
+    }
+    azdo_fetch_iteration_work_items() {
+        printf '%s' '{"workItemRelations":[]}'
+    }
+
+    run cmd_list
+    assert_status 0
+    assert_output_contains "Sprint 1"
+    assert_output_contains "No work items in current sprint."
+}
+
+@test "cmd_list: renders header row, items, rule lines, and trailing count" {
+    require_binary jq
+
+    twk_write_fake_config
+    config_global_file() { printf '%s\n' "${TWK_CONFIG_DIR}/config"; }
+    config_find_local() { return 1; }
+
+    export TWK_TIME_FIELD_TASK="Custom.TaskTime"
+    export TWK_TIME_FIELD_FEATURE="Custom.FeatureTime"
+
+    azdo_fetch_current_iteration() {
+        printf '%s' '{"value":[{"id":"iter-1","name":"Sprint 23"}]}'
+    }
+    azdo_fetch_iteration_work_items() {
+        printf '%s' '{"workItemRelations":[
+            {"target":{"id":1}},
+            {"target":{"id":2}}
+        ]}'
+    }
+    azdo_fetch_sprint_with_details() {
+        printf '%s' '{"value":[
+            {"id":1,"fields":{"System.Title":"First","System.WorkItemType":"Task","System.State":"Active","System.AssignedTo":{"displayName":"Alice"},"Microsoft.VSTS.Common.Priority":1,"Microsoft.VSTS.Scheduling.OriginalEstimate":2,"Custom.TaskTime":0.5,"System.Description":"alpha"}},
+            {"id":2,"fields":{"System.Title":"Second","System.WorkItemType":"Bug","System.State":"New","System.Description":"<b>bravo</b>"}}
+        ]}'
+    }
+
+    run cmd_list
+    assert_status 0
+    assert_output_contains "Sprint 23"
+    # Table header columns appear.
+    assert_output_contains "ID"
+    assert_output_contains "Title"
+    assert_output_contains "State"
+    assert_output_contains "Pri"
+    assert_output_contains "Est"
+    assert_output_contains "Done"
+    assert_output_contains "Assigned"
+    # Rule line uses the box-drawing dash.
+    assert_output_contains "─"
+    # Items render.
+    assert_output_contains "#1"
+    assert_output_contains "First"
+    assert_output_contains "alpha"
+    assert_output_contains "Alice"
+    assert_output_contains "#2"
+    assert_output_contains "Second"
+    assert_output_contains "bravo"
+    assert_output_contains "(2 items in sprint)"
+}
+
+@test "cmd_list: trailing count uses singular for one item" {
+    require_binary jq
+
+    twk_write_fake_config
+    config_global_file() { printf '%s\n' "${TWK_CONFIG_DIR}/config"; }
+    config_find_local() { return 1; }
+
+    azdo_fetch_current_iteration() {
+        printf '%s' '{"value":[{"id":"iter-1","name":"Sprint 23"}]}'
+    }
+    azdo_fetch_iteration_work_items() {
+        printf '%s' '{"workItemRelations":[{"target":{"id":1}}]}'
+    }
+    azdo_fetch_sprint_with_details() {
+        printf '%s' '{"value":[{"id":1,"fields":{"System.Title":"Solo","System.WorkItemType":"Task","System.State":"New"}}]}'
+    }
+
+    run cmd_list
+    assert_status 0
+    assert_output_contains "(1 item in sprint)"
+    [[ "${output}" != *"items in sprint"* ]] || { echo "should be singular; got: ${output}"; return 1; }
+}
+
 @test "cmd_status: rejects unknown arguments with usage hint" {
     twk_write_fake_config
     config_global_file() { printf '%s\n' "${TWK_CONFIG_DIR}/config"; }

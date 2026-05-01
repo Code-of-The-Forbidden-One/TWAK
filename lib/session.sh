@@ -378,6 +378,58 @@ cmd_done() {
     apply_state_change "${work_item_id}" "${target_state}"
 }
 
+cmd_pull() {
+    config_require
+
+    if [[ $# -gt 0 ]]; then
+        echo "Error: 'twk pull' takes no arguments." >&2
+        echo "Usage: twk pull" >&2
+        return 1
+    fi
+
+    local session_files
+    session_files="$(session_list_uncommitted)"
+
+    if [[ -z "${session_files}" ]]; then
+        echo "No sessions to refresh."
+        return
+    fi
+
+    local total=0
+    local f
+    while read -r f; do
+        total=$(( total + 1 ))
+    done <<< "${session_files}"
+
+    echo "Refreshing metadata for ${total} session$( (( total != 1 )) && echo s )..."
+    echo ""
+
+    local refreshed=0 failed=0
+    local session_file work_item_id meta_json title meta_target
+    while read -r session_file; do
+        work_item_id="$(session_work_item_id_from_path "${session_file}")"
+        meta_target="$(session_meta_file_path "${work_item_id}")"
+
+        if meta_json="$(azdo_fetch_work_item_meta "${work_item_id}" 2>/dev/null)" && [[ -n "${meta_json}" ]]; then
+            session_ensure_data_dir
+            printf '%s\n' "${meta_json}" > "${meta_target}"
+            title="$(printf '%s' "${meta_json}" | jq -r '.title // ""')"
+            if [[ -n "${title}" ]]; then
+                echo "  #${work_item_id}: refreshed (\"${title}\")"
+            else
+                echo "  #${work_item_id}: refreshed"
+            fi
+            refreshed=$(( refreshed + 1 ))
+        else
+            echo "  #${work_item_id}: failed (work item not found or unreachable)" >&2
+            failed=$(( failed + 1 ))
+        fi
+    done <<< "${session_files}"
+
+    echo ""
+    echo "Done: ${refreshed} refreshed, ${failed} failed."
+}
+
 cmd_cancel() {
     config_require
     local query

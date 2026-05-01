@@ -112,6 +112,36 @@ When
 is omitted, the interactive picker only lists existing sessions; a
 single match is selected automatically.
 .TP
+.B list
+List every work item in the current sprint as a single-row table
+summary (columns: ID, Title, State, Pri, Est, Done, Assigned) with
+the work item's description rendered as an indented sub-line beneath
+each row. Layout mirrors
+.B "twk status"
+for consistency. Titles are truncated to 32 characters and assignee
+names to 15 characters with
+.IR ... ;
+descriptions are HTML-stripped, whitespace-collapsed, and truncated
+to 240 characters with
+.IR ... .
+Missing values render as
+.IR - .
+The "Done" column comes from the AzDO time field configured in
+.B "twk init"
+and is resolved per item type (Task vs Feature). The "Assigned"
+column is read from
+.IR System.AssignedTo.displayName .
+.TP
+.B pull
+For every uncommitted session, re-fetch the work item's title and
+type from Azure DevOps and rewrite the
+.I .meta
+sidecar. Useful after starting sessions offline (which leaves
+the title as
+.IR "(no title cached)" )
+or when work items have been renamed. Best-effort: per-session
+failures are reported but do not abort the loop.
+.TP
 .B status \fR[\fB\-\-with-existing\fR]
 Print the active config path and scope, followed by every uncommitted
 time entry with its cached title (truncated to 40 chars), current

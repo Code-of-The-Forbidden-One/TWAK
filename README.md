@@ -295,6 +295,67 @@ Cancelled #48215 (00:45:30 discarded)
 
 ---
 
+### `twk list`
+
+Lists every work item in the current sprint with its full metadata. Useful for sprint overviews — what's there, what's been estimated, what's been done so far, and what each item is about — without leaving the terminal.
+
+Layout mirrors `twk status`: a table of the scannable fields (ID, Title, State, Pri, Est, Done, Assigned) with the work item's description as an indented sub-line under each row.
+
+```
+$ twk list
+Current sprint: Sprint 23
+
+───────────────────────────────────────────────────────────────────────────────────────────────
+  ID       Title                            State      Pri  Est      Done     Assigned
+───────────────────────────────────────────────────────────────────────────────────────────────
+  #48210   Implement login button           Active     2    8h       2.5h     Luke McCann
+           OAuth2 implementation with PKCE flow. Needs to handle redirects from the
+           legacy callback URLs and preserve session state across the rewrite.
+  #48215   Refactor authentication middl... Doing      1    4h       -        Sarah Khan
+           Split into auth-core and auth-azdo packages so the core can be reused by
+           the worker tier without dragging the AzDO client.
+  #48220   Audit code paths for the auth... New        3    -        -        -
+           (no description)
+───────────────────────────────────────────────────────────────────────────────────────────────
+(3 items in sprint)
+```
+
+Notes:
+
+- **Title** is truncated to 32 characters with `...` if longer.
+- **Assigned** is the work item's `System.AssignedTo.displayName`. Unassigned items render as `-`. Long names are truncated to 15 characters with `...`.
+- **Done** comes from the AzDO time field configured in `twk init` (Task vs Feature is resolved per item).
+- **Description** is HTML-stripped, whitespace-collapsed, and truncated to 240 characters with `...`. For the full description, click through to AzDO.
+- **Missing values** (no priority, no estimate, no time logged) render as `-`.
+- The command hits AzDO directly — no offline mode. If the iteration or batch fetch fails, it prints a clear error and exits non-zero.
+
+---
+
+### `twk pull`
+
+Refreshes the cached title/type metadata for every uncommitted session by re-fetching from Azure DevOps. Useful when:
+
+- You started a session offline and `twk status` shows `(no title cached)`.
+- A work item was renamed in AzDO and you want `twk status` to show the new title without restarting the session.
+- You want to verify your local cache reflects the current AzDO state without committing or starting anything new.
+
+Best-effort — a single session failing (work item deleted, network glitch) doesn't abort the rest. Each session gets a status line.
+
+```
+$ twk pull
+Refreshing metadata for 3 sessions...
+
+  #48210: refreshed ("Implement login button")
+  #48215: refreshed ("Refactor auth middleware")
+  #48220: failed (work item not found or unreachable)
+
+Done: 2 refreshed, 1 failed.
+```
+
+This only refreshes data that's cached locally (currently title + type, used by `twk status`). Sprint listings are read live by `twk list`; `twk commit` reads existing AzDO time live; neither uses or affects the meta cache.
+
+---
+
 ### `twk status [--with-existing]`
 
 Shows which config is active (and its scope) followed by all uncommitted time entries with their work item title, current state, and accumulated duration.
@@ -382,6 +443,8 @@ Usage:
     twk done             Mark a work item as done
     twk undo             Undo the last event on a session
     twk cancel           Discard an uncommitted session
+    twk list             List current sprint items with metadata
+    twk pull             Refresh cached title/type for all sessions
     twk status           View uncommitted time entries
     twk commit           Push time entries to Azure DevOps
     twk version          Show version

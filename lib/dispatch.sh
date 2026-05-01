@@ -24,6 +24,8 @@ Usage:
     twk done             Mark a work item as done
     twk undo             Undo the last event on a session
     twk cancel           Discard an uncommitted session
+    twk list             List current sprint items with metadata
+    twk pull             Refresh cached title/type for all sessions
     twk status           View uncommitted time entries
     twk commit           Push time entries to Azure DevOps
     twk version          Show version
@@ -58,6 +60,8 @@ main() {
         done)    cmd_done "$@" ;;
         undo)    cmd_undo "$@" ;;
         cancel)  cmd_cancel "$@" ;;
+        list)    cmd_list "$@" ;;
+        pull)    cmd_pull "$@" ;;
         status)  cmd_status "$@" ;;
         commit)  cmd_commit "$@" ;;
         version) echo "twk ${TWK_VERSION}" ;;

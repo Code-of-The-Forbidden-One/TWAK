@@ -178,6 +178,63 @@ Examples:
     twk cancel 12345 --state "To Do"    Discard and revert AzDO state
 HELP
             ;;
+        list)
+            cat <<'HELP'
+twk list - List current sprint items with metadata
+
+Usage:
+    twk list
+
+Prints every work item in the current sprint as a single-row
+table summary plus a description sub-line indented underneath:
+
+    ID       Title                            State      Pri  Est      Done     Assigned
+    ───────────────────────────────────────────────────────────────────────────────────────
+      #12345  Implement login button           Active     2    8h       2.5h     Luke McCann
+              OAuth2 with PKCE flow. Needs to handle redirects from the
+              legacy callback URLs.
+      #12346  Refactor auth middleware         Doing      1    4h       -        Sarah Khan
+              Split into auth-core and auth-azdo packages.
+
+The summary row mirrors 'twk status' for consistency. Titles
+are truncated to 32 chars with '...' if longer; assignee names
+are truncated to 15 chars; descriptions are HTML-stripped,
+whitespace-collapsed, and truncated to 240 chars with '...'.
+Missing values render as '-'. The "Done" value comes from the
+AzDO time field configured in 'twk init' (Task vs Feature is
+resolved per item). The "Assigned" column is read from
+System.AssignedTo.displayName.
+HELP
+            ;;
+        pull)
+            cat <<'HELP'
+twk pull - Refresh cached metadata for every active session
+
+Usage:
+    twk pull
+
+For every uncommitted session, fetches the latest title and type
+from Azure DevOps and writes a fresh .meta sidecar file. Useful
+after starting a session offline (which leaves the title as
+"(no title cached)") or when a work item has been renamed and you
+want 'twk status' to reflect the new title without restarting the
+session.
+
+Per-session status is printed:
+
+    Refreshing metadata for 3 sessions...
+
+      #48210: refreshed ("Implement login button")
+      #48215: refreshed ("Refactor auth middleware")
+      #48220: failed (work item not found or unreachable)
+
+    Done: 2 refreshed, 1 failed.
+
+Best-effort: a single session failing does not abort the others.
+The work item must exist in Azure DevOps for the refresh to
+succeed; deleted or out-of-scope items are reported as failed.
+HELP
+            ;;
         status)
             cat <<'HELP'
 twk status - View active config and uncommitted time entries

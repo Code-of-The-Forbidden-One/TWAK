@@ -52,6 +52,148 @@ lookup_existing_time() {
     fi
 }
 
+readonly LIST_DESC_TRUNCATE=240
+readonly LIST_TITLE_WIDTH=32
+readonly LIST_ASSIGNED_WIDTH=15
+readonly LIST_DESC_INDENT="           "
+readonly LIST_DESC_WRAP_WIDTH=78
+
+normalise_description() {
+    local html="$1"
+    if [[ -z "${html}" ]]; then
+        echo "(no description)"
+        return
+    fi
+    local plain
+    plain="$(printf '%s' "${html}" \
+        | sed 's/<[^>]*>//g
+               s/&nbsp;/ /g
+               s/&amp;/\&/g
+               s/&lt;/</g
+               s/&gt;/>/g
+               s/&quot;/"/g
+               s/&#39;/'\''/g' \
+        | tr -s '[:space:]' ' ' \
+        | sed 's/^ //;s/ $//')"
+    if [[ -z "${plain}" ]]; then
+        echo "(no description)"
+        return
+    fi
+    if (( ${#plain} > LIST_DESC_TRUNCATE )); then
+        printf '%s...' "${plain:0:LIST_DESC_TRUNCATE}"
+    else
+        printf '%s' "${plain}"
+    fi
+}
+
+render_list_item() {
+    local item_json="$1"
+
+    local id title type state priority est done assigned description
+    id="$(echo "${item_json}"          | jq -r '.id')"
+    title="$(echo "${item_json}"       | jq -r '.fields["System.Title"] // ""')"
+    type="$(echo "${item_json}"        | jq -r '.fields["System.WorkItemType"] // ""')"
+    state="$(echo "${item_json}"       | jq -r '.fields["System.State"] // ""')"
+    priority="$(echo "${item_json}"    | jq -r '.fields["Microsoft.VSTS.Common.Priority"] // "-"')"
+    est="$(echo "${item_json}"         | jq -r '.fields["Microsoft.VSTS.Scheduling.OriginalEstimate"] // empty')"
+    [[ -z "${est}" ]] && est="-" || est="${est}h"
+
+    local time_field
+    case "${type}" in
+        Feature) time_field="${TWK_TIME_FIELD_FEATURE}" ;;
+        *)       time_field="${TWK_TIME_FIELD_TASK}" ;;
+    esac
+    done="$(echo "${item_json}" | jq -r --arg f "${time_field}" '.fields[$f] // empty')"
+    [[ -z "${done}" ]] && done="-" || done="${done}h"
+
+    # System.AssignedTo is an object {displayName, uniqueName, ...} when set,
+    # null/missing when unassigned. The `?` suppresses errors for the legacy
+    # string form (older API versions) so it falls through to "-".
+    assigned="$(echo "${item_json}" | jq -r '.fields["System.AssignedTo"].displayName? // "-"')"
+
+    description="$(normalise_description "$(echo "${item_json}" | jq -r '.fields["System.Description"] // ""')")"
+
+    printf "  #%-7s %-${LIST_TITLE_WIDTH}s %-10s %-4s %-8s %-8s %s\n" \
+        "${id}" \
+        "$(truncate_title "${title}" "${LIST_TITLE_WIDTH}")" \
+        "${state}" \
+        "${priority}" \
+        "${est}" \
+        "${done}" \
+        "$(truncate_title "${assigned}" "${LIST_ASSIGNED_WIDTH}")"
+
+    printf '%s' "${description}" \
+        | fold -s -w "${LIST_DESC_WRAP_WIDTH}" \
+        | awk -v ind="${LIST_DESC_INDENT}" '{ print ind $0 }'
+}
+
+cmd_list() {
+    config_require
+
+    if [[ $# -gt 0 ]]; then
+        echo "Error: 'twk list' takes no arguments." >&2
+        echo "Usage: twk list" >&2
+        return 1
+    fi
+
+    local iteration_response
+    iteration_response="$(azdo_fetch_current_iteration)" || {
+        echo "Error: failed to fetch current iteration." >&2
+        return 1
+    }
+
+    local iteration_id iteration_name
+    iteration_id="$(echo "${iteration_response}"   | jq -r '.value[0].id')"
+    iteration_name="$(echo "${iteration_response}" | jq -r '.value[0].name // .value[0].path // ""')"
+
+    if [[ -z "${iteration_id}" || "${iteration_id}" == "null" ]]; then
+        echo "Error: no current iteration found." >&2
+        return 1
+    fi
+
+    local items_response
+    items_response="$(azdo_fetch_iteration_work_items "${iteration_id}")" || {
+        echo "Error: failed to fetch work items for current iteration." >&2
+        return 1
+    }
+
+    local ids_json
+    ids_json="$(echo "${items_response}" | jq '[.workItemRelations[].target.id] | unique')"
+
+    if [[ "${ids_json}" == "[]" || -z "${ids_json}" ]]; then
+        echo "Current sprint${iteration_name:+: }${iteration_name}"
+        echo "No work items in current sprint."
+        return
+    fi
+
+    local batch_response
+    batch_response="$(azdo_fetch_sprint_with_details "${ids_json}")" || {
+        echo "Error: failed to fetch work item details." >&2
+        return 1
+    }
+
+    local count
+    count="$(echo "${batch_response}" | jq '.value | length')"
+
+    local rule
+    rule="$(printf '─%.0s' $(seq 1 95))"
+
+    echo "Current sprint${iteration_name:+: }${iteration_name}"
+    echo ""
+    echo "${rule}"
+    printf "  %-8s %-${LIST_TITLE_WIDTH}s %-10s %-4s %-8s %-8s %s\n" \
+        "ID" "Title" "State" "Pri" "Est" "Done" "Assigned"
+    echo "${rule}"
+
+    local item
+    while IFS= read -r item; do
+        render_list_item "${item}"
+    done < <(echo "${batch_response}" | jq -c '.value[]')
+
+    echo "${rule}"
+    echo "(${count} item$( (( count != 1 )) && echo s ) in sprint)"
+}
+
 cmd_status() {
     config_require
 

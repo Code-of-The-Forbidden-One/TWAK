@@ -173,6 +173,32 @@ setup() {
 # fields plus System.Id/Type, deduplicated when task field == feature field.
 # -----------------------------------------------------------------------------
 
+@test "azdo_fetch_sprint_with_details: POSTs with description, priority, estimate, time fields" {
+    export TWK_ORGANIZATION="acme" TWK_PROJECT="Platform"
+    export TWK_TIME_FIELD_TASK="Custom.TaskTime"
+    export TWK_TIME_FIELD_FEATURE="Custom.FeatureTime"
+
+    local captured_method="" captured_url="" captured_body=""
+    azdo_api_request() {
+        captured_method="$1"
+        captured_url="$2"
+        captured_body="$3"
+        printf '%s' '{"value":[]}'
+    }
+
+    azdo_fetch_sprint_with_details "[10,20]"
+    [[ "${captured_method}" == "POST" ]] || { echo "method: ${captured_method}"; return 1; }
+    [[ "${captured_url}" == *"workitemsbatch"* ]] || { echo "url: ${captured_url}"; return 1; }
+    [[ "${captured_body}" == *"System.Description"* ]] || { echo "missing description"; return 1; }
+    [[ "${captured_body}" == *"System.AssignedTo"* ]] || { echo "missing assigned-to"; return 1; }
+    [[ "${captured_body}" == *"Microsoft.VSTS.Common.Priority"* ]] || { echo "missing priority"; return 1; }
+    [[ "${captured_body}" == *"Microsoft.VSTS.Scheduling.OriginalEstimate"* ]] || { echo "missing estimate"; return 1; }
+    [[ "${captured_body}" == *"Custom.TaskTime"* ]] || { echo "missing task field"; return 1; }
+    [[ "${captured_body}" == *"Custom.FeatureTime"* ]] || { echo "missing feature field"; return 1; }
+    [[ "${captured_body}" == *"10"* ]] || { echo "missing id 10"; return 1; }
+    [[ "${captured_body}" == *"20"* ]] || { echo "missing id 20"; return 1; }
+}
+
 @test "azdo_fetch_existing_times: POSTs to workitemsbatch with configured fields" {
     export TWK_ORGANIZATION="acme" TWK_PROJECT="Platform"
     export TWK_TIME_FIELD_TASK="Custom.TaskTime"

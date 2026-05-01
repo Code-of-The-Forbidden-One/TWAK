@@ -501,3 +501,109 @@ setup() {
     assert_output_contains "100.session"
     assert_output_contains "200.session"
 }
+
+# -----------------------------------------------------------------------------
+# cmd_pull — refreshes .meta for every uncommitted session via
+# azdo_fetch_work_item_meta (overridden per test).
+# -----------------------------------------------------------------------------
+
+@test "cmd_pull: rejects unexpected arguments" {
+    twk_write_fake_config
+
+    run cmd_pull surplus
+    assert_status 1
+    assert_output_contains "takes no arguments"
+}
+
+@test "cmd_pull: prints 'no sessions' when there is nothing to refresh" {
+    twk_write_fake_config
+
+    run cmd_pull
+    assert_status 0
+    assert_output_contains "No sessions to refresh."
+}
+
+@test "cmd_pull: refreshes meta for every session and reports per-line" {
+    require_binary jq
+    twk_write_fake_config
+
+    echo "start|1700000000" > "${TWK_DATA_DIR}/100.session"
+    echo "start|1700000000" > "${TWK_DATA_DIR}/200.session"
+
+    azdo_fetch_work_item_meta() {
+        case "$1" in
+            100) printf '%s' '{"title":"First","type":"Task"}' ;;
+            200) printf '%s' '{"title":"Second","type":"Bug"}' ;;
+            *)   return 1 ;;
+        esac
+    }
+
+    run cmd_pull
+    assert_status 0
+    assert_output_contains "Refreshing metadata for 2 sessions..."
+    assert_output_contains "#100: refreshed (\"First\")"
+    assert_output_contains "#200: refreshed (\"Second\")"
+    assert_output_contains "Done: 2 refreshed, 0 failed."
+
+    [[ -f "${TWK_DATA_DIR}/100.meta" ]] || { echo "100.meta missing"; return 1; }
+    grep -q '"title":"First"' "${TWK_DATA_DIR}/100.meta"
+    [[ -f "${TWK_DATA_DIR}/200.meta" ]] || { echo "200.meta missing"; return 1; }
+    grep -q '"title":"Second"' "${TWK_DATA_DIR}/200.meta"
+}
+
+@test "cmd_pull: failures are reported per-session and do not abort the loop" {
+    require_binary jq
+    twk_write_fake_config
+
+    echo "start|1700000000" > "${TWK_DATA_DIR}/100.session"
+    echo "start|1700000000" > "${TWK_DATA_DIR}/200.session"
+    echo "start|1700000000" > "${TWK_DATA_DIR}/300.session"
+
+    azdo_fetch_work_item_meta() {
+        case "$1" in
+            100) printf '%s' '{"title":"OK","type":"Task"}' ;;
+            200) return 1 ;;
+            300) printf '%s' '{"title":"Also OK","type":"Bug"}' ;;
+        esac
+    }
+
+    run cmd_pull
+    assert_status 0
+    assert_output_contains "#100: refreshed"
+    assert_output_contains "#200: failed"
+    assert_output_contains "#300: refreshed"
+    assert_output_contains "Done: 2 refreshed, 1 failed."
+}
+
+@test "cmd_pull: overwrites a stale meta file with the fresh value" {
+    require_binary jq
+    twk_write_fake_config
+
+    echo "start|1700000000" > "${TWK_DATA_DIR}/100.session"
+    printf '%s' '{"title":"Stale name","type":"Task"}' > "${TWK_DATA_DIR}/100.meta"
+
+    azdo_fetch_work_item_meta() {
+        printf '%s' '{"title":"Fresh name","type":"Task"}'
+    }
+
+    run cmd_pull
+    assert_status 0
+    grep -q '"title":"Fresh name"' "${TWK_DATA_DIR}/100.meta"
+    ! grep -q '"title":"Stale name"' "${TWK_DATA_DIR}/100.meta"
+}
+
+@test "cmd_pull: refreshed message omits empty title in parens" {
+    require_binary jq
+    twk_write_fake_config
+
+    echo "start|1700000000" > "${TWK_DATA_DIR}/100.session"
+
+    azdo_fetch_work_item_meta() {
+        printf '%s' '{"title":"","type":"Task"}'
+    }
+
+    run cmd_pull
+    assert_status 0
+    [[ "${output}" == *"#100: refreshed"* ]] || { echo "got: ${output}"; return 1; }
+    [[ "${output}" != *"#100: refreshed (\"\")"* ]] || { echo "should not show empty quoted title"; return 1; }
+}

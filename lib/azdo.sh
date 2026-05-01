@@ -117,6 +117,28 @@ azdo_resolve_time_field() {
     esac
 }
 
+azdo_update_state() {
+    local work_item_id="$1"
+    local new_state="$2"
+    validate_work_item_id "${work_item_id}" || return 1
+
+    local url
+    url="$(azdo_base_url)/_apis/wit/workitems/${work_item_id}?api-version=7.1"
+
+    local body
+    body=$(cat <<EOF
+[
+    {
+        "op": "replace",
+        "path": "/fields/System.State",
+        "value": "${new_state}"
+    }
+]
+EOF
+    )
+    azdo_api_request "PATCH" "${url}" "${body}" > /dev/null 2>&1
+}
+
 azdo_update_time_spent() {
     local work_item_id="$1"
     local hours="$2"

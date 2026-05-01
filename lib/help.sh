@@ -169,6 +169,41 @@ Examples:
     twk assign --me               Pick task, assign yourself
 HELP
             ;;
+        reset)
+            cat <<'HELP'
+twk reset - Zero out the configured time field on a work item
+
+Usage:
+    twk reset [task] [-y|--yes]
+
+Arguments:
+    [task]      Work item ID, partial title, or omit for the
+                current-sprint interactive picker
+
+Options:
+    -y, --yes   Skip the confirmation prompt. Useful for scripts;
+                use with care.
+
+PATCHes the configured time field on the work item to 0. The
+field is the same one 'twk commit' writes to (Task vs Feature
+resolved per item type from your 'twk init' configuration).
+
+Destructive: whatever was logged on AzDO for that field is
+gone. By default the command shows the current value and asks
+for confirmation. An empty response or anything other than
+'y'/'yes' cancels.
+
+Local sessions are NOT touched. If you have an uncommitted
+session for this work item, it remains. The next 'twk commit'
+will push your local hours onto the now-zeroed AzDO value, so
+the result will be exactly your tracked time.
+
+Use cases:
+    twk reset 12345        Wipe AzDO time on #12345 (with prompt)
+    twk reset 12345 -y     Wipe without prompting (scripts)
+    twk reset              Pick interactively, confirm, wipe
+HELP
+            ;;
         comment)
             cat <<'HELP'
 twk comment - Post a comment to a work item's Discussion

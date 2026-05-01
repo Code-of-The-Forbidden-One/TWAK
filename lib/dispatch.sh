@@ -34,6 +34,7 @@ Usage:
     twk done             Mark a work item as done (state-only)
     twk assign           Assign a work item to a user
     twk comment          Post a comment to a work item's Discussion
+    twk reset            Zero out the configured time field on AzDO
 
   Read-only:
     twk list             List current sprint items with metadata
@@ -59,6 +60,7 @@ Options:
     --all                (assign, users) Use org-wide user list (Graph API; needs PAT scope)
     --discussion         (show only) Append the AzDO Discussion thread (comments)
     --dry-run            (commit only) Preview what would be pushed without writing
+    -y, --yes            (reset only) Skip the destructive-action confirmation prompt
 
 Note: --state X on any time-tracking command also fires an immediate PATCH to AzDO.
 
@@ -88,6 +90,7 @@ main() {
         done)    cmd_done "$@" ;;
         assign)  cmd_assign "$@" ;;
         comment) cmd_comment "$@" ;;
+        reset)   cmd_reset "$@" ;;
         undo)    cmd_undo "$@" ;;
         cancel)  cmd_cancel "$@" ;;
         adjust)  cmd_adjust "$@" ;;

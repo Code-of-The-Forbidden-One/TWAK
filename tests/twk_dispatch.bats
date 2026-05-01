@@ -76,6 +76,7 @@ _run_dispatch() {
         cmd_done()    { printf "done\t%s\n"    "$*" >> "$CALL_LOG"; }
         cmd_assign()  { printf "assign\t%s\n"  "$*" >> "$CALL_LOG"; }
         cmd_comment() { printf "comment\t%s\n" "$*" >> "$CALL_LOG"; }
+        cmd_reset()   { printf "reset\t%s\n"   "$*" >> "$CALL_LOG"; }
         cmd_undo()    { printf "undo\t%s\n"    "$*" >> "$CALL_LOG"; }
         cmd_cancel()  { printf "cancel\t%s\n"  "$*" >> "$CALL_LOG"; }
         cmd_adjust()  { printf "adjust\t%s\n"  "$*" >> "$CALL_LOG"; }
@@ -145,6 +146,11 @@ _first_call() {
 @test "dispatch: 'twk adjust 12345 +30m' → cmd_adjust 12345 +30m" {
     run _run_dispatch adjust 12345 +30m
     [[ "$(_first_call)" == $'adjust\t12345 +30m' ]]
+}
+
+@test "dispatch: 'twk reset 12345 --yes' → cmd_reset 12345 --yes" {
+    run _run_dispatch reset 12345 --yes
+    [[ "$(_first_call)" == $'reset\t12345 --yes' ]]
 }
 
 @test "dispatch: 'twk list' → cmd_list" {

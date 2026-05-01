@@ -783,6 +783,198 @@ setup() {
 }
 
 # -----------------------------------------------------------------------------
+# cmd_reset — PATCH the configured time field to 0. Destructive; default
+# behaviour confirms; -y/--yes skips. No local session changes.
+# -----------------------------------------------------------------------------
+
+@test "cmd_reset: rejects too many args" {
+    twk_write_fake_config
+
+    run cmd_reset 1 2
+    assert_status 1
+    assert_output_contains "too many arguments"
+}
+
+@test "cmd_reset: errors when work item fetch fails" {
+    twk_write_fake_config
+
+    azdo_resolve_time_field() { echo "Custom.TaskTime"; }
+    azdo_fetch_work_item() { return 1; }
+
+    run cmd_reset 12345 --yes
+    assert_status 1
+    assert_output_contains "failed to fetch work item #12345"
+}
+
+@test "cmd_reset: --yes skips prompt and PATCHes 0 to the configured field" {
+    require_binary jq
+    require_binary bc
+    twk_write_fake_config
+
+    azdo_resolve_time_field() { echo "Custom.TaskTime"; }
+    azdo_fetch_work_item() {
+        printf '%s' '{"id":12345,"fields":{"Custom.TaskTime":4.2}}'
+    }
+
+    local captured_id="" captured_value="" captured_field=""
+    azdo_update_time_spent() {
+        captured_id="$1"
+        captured_value="$2"
+        captured_field="$3"
+        return 0
+    }
+
+    run cmd_reset 12345 --yes
+    assert_status 0
+    [[ "${captured_id}" == "12345" ]] || { echo "got id: ${captured_id}"; return 1; }
+    [[ "${captured_value}" == "0" ]] || { echo "got value: ${captured_value}"; return 1; }
+    [[ "${captured_field}" == "Custom.TaskTime" ]] || { echo "got field: ${captured_field}"; return 1; }
+    assert_output_contains "Reset #12345 (was 4.2h, now 0h)"
+}
+
+@test "cmd_reset: short form -y also skips the prompt" {
+    require_binary jq
+    require_binary bc
+    twk_write_fake_config
+
+    azdo_resolve_time_field() { echo "Custom.TaskTime"; }
+    azdo_fetch_work_item() { printf '%s' '{"id":12345,"fields":{"Custom.TaskTime":1.5}}'; }
+    azdo_update_time_spent() { return 0; }
+
+    run cmd_reset 12345 -y
+    assert_status 0
+    assert_output_contains "Reset #12345"
+}
+
+@test "cmd_reset: prompt 'y' confirms and PATCHes" {
+    require_binary jq
+    require_binary bc
+    twk_write_fake_config
+
+    azdo_resolve_time_field() { echo "Custom.TaskTime"; }
+    azdo_fetch_work_item() { printf '%s' '{"id":12345,"fields":{"Custom.TaskTime":2.0}}'; }
+    azdo_update_time_spent() { return 0; }
+
+    run bash -c "
+        source '${TWK_REPO}/lib/config.sh'
+        source '${TWK_REPO}/lib/azdo.sh'
+        source '${TWK_REPO}/lib/resolve.sh'
+        source '${TWK_REPO}/lib/session.sh'
+        source '${TWK_REPO}/lib/display.sh'
+        export TWK_DATA_DIR='${TWK_DATA_DIR}'
+        export TWK_CONFIG_DIR='${TWK_CONFIG_DIR}'
+        azdo_resolve_time_field() { echo 'Custom.TaskTime'; }
+        azdo_fetch_work_item() { printf '%s' '{\"id\":12345,\"fields\":{\"Custom.TaskTime\":2.0}}'; }
+        azdo_update_time_spent() { echo \"PATCH \$1 = \$2\"; }
+        echo y | cmd_reset 12345
+    "
+    assert_status 0
+    assert_output_contains "Current"
+    assert_output_contains "PATCH 12345 = 0"
+    assert_output_contains "Reset #12345"
+}
+
+@test "cmd_reset: prompt 'n' (or empty) cancels and does NOT PATCH" {
+    require_binary jq
+    require_binary bc
+    twk_write_fake_config
+
+    azdo_resolve_time_field() { echo "Custom.TaskTime"; }
+    azdo_fetch_work_item() { printf '%s' '{"id":12345,"fields":{"Custom.TaskTime":2.0}}'; }
+
+    local patched=false
+    azdo_update_time_spent() { patched=true; }
+
+    run bash -c "
+        source '${TWK_REPO}/lib/config.sh'
+        source '${TWK_REPO}/lib/azdo.sh'
+        source '${TWK_REPO}/lib/resolve.sh'
+        source '${TWK_REPO}/lib/session.sh'
+        source '${TWK_REPO}/lib/display.sh'
+        export TWK_DATA_DIR='${TWK_DATA_DIR}'
+        export TWK_CONFIG_DIR='${TWK_CONFIG_DIR}'
+        azdo_resolve_time_field() { echo 'Custom.TaskTime'; }
+        azdo_fetch_work_item() { printf '%s' '{\"id\":12345,\"fields\":{\"Custom.TaskTime\":2.0}}'; }
+        azdo_update_time_spent() { echo 'PATCH FIRED'; }
+        echo n | cmd_reset 12345
+    "
+    assert_status 1
+    assert_output_contains "Cancelled."
+    [[ "${output}" != *"PATCH FIRED"* ]] || { echo "PATCH should not have fired on 'n'"; return 1; }
+}
+
+@test "cmd_reset: empty response cancels (default N)" {
+    require_binary jq
+    require_binary bc
+    twk_write_fake_config
+
+    run bash -c "
+        source '${TWK_REPO}/lib/config.sh'
+        source '${TWK_REPO}/lib/azdo.sh'
+        source '${TWK_REPO}/lib/resolve.sh'
+        source '${TWK_REPO}/lib/session.sh'
+        source '${TWK_REPO}/lib/display.sh'
+        export TWK_DATA_DIR='${TWK_DATA_DIR}'
+        export TWK_CONFIG_DIR='${TWK_CONFIG_DIR}'
+        azdo_resolve_time_field() { echo 'Custom.TaskTime'; }
+        azdo_fetch_work_item() { printf '%s' '{\"id\":12345,\"fields\":{\"Custom.TaskTime\":1.0}}'; }
+        azdo_update_time_spent() { echo 'PATCH FIRED'; }
+        echo '' | cmd_reset 12345
+    "
+    assert_status 1
+    assert_output_contains "Cancelled."
+    [[ "${output}" != *"PATCH FIRED"* ]] || { echo "PATCH should not have fired on empty input"; return 1; }
+}
+
+@test "cmd_reset: no-ops when current value is already 0" {
+    require_binary jq
+    require_binary bc
+    twk_write_fake_config
+
+    azdo_resolve_time_field() { echo "Custom.TaskTime"; }
+    azdo_fetch_work_item() { printf '%s' '{"id":12345,"fields":{"Custom.TaskTime":0}}'; }
+
+    local patched=false
+    azdo_update_time_spent() { patched=true; }
+
+    run cmd_reset 12345 -y
+    assert_status 0
+    assert_output_contains "already 0; nothing to reset"
+    [[ "${patched}" == false ]] || { echo "PATCH should not have fired for already-zero"; return 1; }
+}
+
+@test "cmd_reset: handles missing field (treated as 0, no-ops)" {
+    require_binary jq
+    require_binary bc
+    twk_write_fake_config
+
+    azdo_resolve_time_field() { echo "Custom.TaskTime"; }
+    azdo_fetch_work_item() { printf '%s' '{"id":12345,"fields":{}}'; }
+
+    local patched=false
+    azdo_update_time_spent() { patched=true; }
+
+    run cmd_reset 12345 -y
+    assert_status 0
+    assert_output_contains "already 0; nothing to reset"
+    [[ "${patched}" == false ]] || { echo "PATCH should not have fired"; return 1; }
+}
+
+@test "cmd_reset: reports failure when AzDO PATCH fails" {
+    require_binary jq
+    require_binary bc
+    twk_write_fake_config
+
+    azdo_resolve_time_field() { echo "Custom.TaskTime"; }
+    azdo_fetch_work_item() { printf '%s' '{"id":12345,"fields":{"Custom.TaskTime":3.5}}'; }
+    azdo_update_time_spent() { return 1; }
+
+    run cmd_reset 12345 -y
+    assert_status 1
+    assert_output_contains "failed to reset #12345"
+}
+
+# -----------------------------------------------------------------------------
 # cmd_assign — PATCH System.AssignedTo for a work item, no session touch.
 # -----------------------------------------------------------------------------
 

@@ -158,6 +158,24 @@ user resolution fails, the PATCH fails and the work item is
 left unchanged. Read-only against local sessions; modifies
 AzDO state only.
 .TP
+.B reset \fR[\fItask\fR] [\fB\-y\fR | \fB\-\-yes\fR]
+PATCH the configured time field on the work item to 0. The field
+is whichever
+.B "twk commit"
+would write to (Task vs Feature resolved per item type from
+.BR "twk init" ).
+Destructive: whatever was logged on AzDO is wiped. By default
+the command displays the current value and prompts
+.RI ( "[y/N]" ).
+.B \-y
+or
+.B \-\-yes
+skips the prompt — use with care, intended for scripts. Local
+sessions are not touched; an uncommitted session remains and
+the next
+.B "twk commit"
+will push its hours onto the zeroed value.
+.TP
 .B comment \fR[\fItask\fR] [\fItext\fR | \fB\-\fR]
 Post a comment to the work item's Discussion thread. Three input
 modes for the comment body: an inline string as the second

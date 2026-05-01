@@ -89,7 +89,7 @@ twk has two distinct ways of writing to Azure DevOps. Knowing which is which avo
 | Flow | Commands | When does AzDO see it? |
 |---|---|---|
 | **Commit cycle (deferred)** | `start`, `pause`, `end`, `undo`, `cancel`, `status`, `commit` | `start`/`pause`/`end`/`undo`/`cancel` only touch local session files. AzDO is contacted **only** on `twk commit`, which pushes the accumulated hours in one go. |
-| **Immediate AzDO actions** | `done`, `assign`, `comment` | PATCH/POST to AzDO **as soon as you invoke them**. No staging, no `commit`, no twk-side undo — fix via the AzDO web UI or by re-running with different arguments. |
+| **Immediate AzDO actions** | `done`, `assign`, `comment`, `reset` | PATCH/POST to AzDO **as soon as you invoke them**. No staging, no `commit`, no twk-side undo — fix via the AzDO web UI or by re-running with different arguments. `reset` is destructive (wipes the time field) so it confirms by default. |
 | **Immediate (alongside session change)** | `--state X` flag on any time-tracking command | Fires an immediate state PATCH on top of the local session change. The session part still goes through the commit cycle; the state change does not. |
 | **Read-only / local** | `list`, `show`, `users`, `pull`, `init` (writes local config), `version`, `help` | No writes to AzDO state. `list`/`show`/`users` read from AzDO. `pull` reads from AzDO and writes only to your local meta cache. `status` is local-only by default; with `--with-existing` it reads from AzDO. |
 
@@ -309,6 +309,39 @@ Error: failed to assign #12345 to nobody@nowhere.
        Check that the user (email, display name, or unique name) is
        recognised in this Azure DevOps organisation.
 ```
+
+---
+
+### `twk reset [task] [-y|--yes]`
+
+Zeros out the configured time field on a work item in Azure DevOps. Useful when you've over-committed time or the existing AzDO value is wrong and you want to start fresh.
+
+**Destructive.** Whatever was logged on AzDO for the time field is gone. By default the command shows the current value and prompts:
+
+```
+$ twk reset 12345
+Current Custom.TimeSpent on #12345: 4.20h
+Reset to 0 on Azure DevOps? [y/N] y
+Reset #12345 (was 4.20h, now 0h)
+```
+
+`-y` / `--yes` skips the prompt. Pair carefully with explicit IDs — accidental wipes on a `twk reset` invocation in a wrong shell tab are easy regrets.
+
+```
+$ twk reset 12345 --yes
+Reset #12345 (was 4.20h, now 0h)
+```
+
+If the field is already 0, the command no-ops:
+
+```
+$ twk reset 12345
+#12345: Custom.TimeSpent is already 0; nothing to reset.
+```
+
+**Local sessions are NOT touched.** If you have an uncommitted local session for the same work item, it remains. The next `twk commit` will push your local hours onto the now-zeroed AzDO value, so the AzDO total ends up as exactly your tracked time. This is often the goal: reset the slate, then commit clean hours.
+
+The task argument supports the usual resolution modes (numeric ID, title search, or interactive picker when omitted).
 
 ---
 
@@ -773,6 +806,7 @@ Usage:
     twk done             Mark a work item as done (state-only)
     twk assign           Assign a work item to a user
     twk comment          Post a comment to a work item's Discussion
+    twk reset            Zero out the configured time field on AzDO
 
   Read-only:
     twk list             List current sprint items with metadata
@@ -798,6 +832,7 @@ Options:
     --all                (assign, users) Use org-wide user list (Graph API; needs PAT scope)
     --discussion         (show only) Append the AzDO Discussion thread (comments)
     --dry-run            (commit only) Preview what would be pushed without writing
+    -y, --yes            (reset only) Skip the destructive-action confirmation prompt
 
 Note: --state X on any time-tracking command also fires an immediate PATCH to AzDO.
 

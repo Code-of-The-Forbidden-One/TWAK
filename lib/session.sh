@@ -385,6 +385,73 @@ cmd_done() {
     apply_state_change "${work_item_id}" "${target_state}"
 }
 
+cmd_reset() {
+    config_require
+
+    local skip_confirm=false
+    local positional=()
+    local arg
+    for arg in "$@"; do
+        case "${arg}" in
+            -y|--yes) skip_confirm=true ;;
+            *)        positional+=("${arg}") ;;
+        esac
+    done
+
+    if [[ ${#positional[@]} -gt 1 ]]; then
+        echo "Error: too many arguments." >&2
+        echo "Usage: twk reset [task] [-y|--yes]" >&2
+        return 1
+    fi
+
+    local task_query="${positional[0]:-}"
+    local work_item_id
+    work_item_id="$(resolve_work_item "${task_query}")" || return 1
+
+    local time_field
+    time_field="$(azdo_resolve_time_field "${work_item_id}")"
+
+    local existing_work_item
+    existing_work_item="$(azdo_fetch_work_item "${work_item_id}" 2>/dev/null)" || {
+        echo "Error: failed to fetch work item #${work_item_id}." >&2
+        return 1
+    }
+
+    local current_value
+    current_value="$(echo "${existing_work_item}" | jq -r --arg field "${time_field}" '.fields[$field] // 0')"
+
+    # Treat any "is-zero" value as already cleared (handles "0", "0.0", "0.00", etc.).
+    local is_zero
+    is_zero="$(echo "${current_value} == 0" | bc -l 2>/dev/null)"
+    if [[ "${is_zero}" == "1" ]]; then
+        echo "#${work_item_id}: ${time_field} is already 0; nothing to reset."
+        return
+    fi
+
+    if [[ "${skip_confirm}" == false ]]; then
+        echo "Current ${time_field} on #${work_item_id}: ${current_value}h"
+        local response
+        if ! read -rp "Reset to 0 on Azure DevOps? [y/N] " response; then
+            echo "Cancelled." >&2
+            return 1
+        fi
+        case "${response}" in
+            y|Y|yes|YES) ;;
+            *)
+                echo "Cancelled."
+                return 1
+                ;;
+        esac
+    fi
+
+    if azdo_update_time_spent "${work_item_id}" "0" "${time_field}" > /dev/null 2>&1; then
+        echo "Reset #${work_item_id} (was ${current_value}h, now 0h)"
+    else
+        echo "Error: failed to reset #${work_item_id} on Azure DevOps." >&2
+        return 1
+    fi
+}
+
 cmd_assign() {
     config_require
 

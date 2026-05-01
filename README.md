@@ -233,6 +233,37 @@ Arguments:
 
 ---
 
+## Windows (WSL)
+
+`twk` runs natively on Windows through the Windows Subsystem for Linux. If you don't have WSL set up yet, open PowerShell as Administrator and run:
+
+```powershell
+wsl --install
+```
+
+Restart your machine when prompted, then launch Ubuntu from the Start menu. Once inside WSL, install the dependencies and `twk` as normal:
+
+```bash
+sudo apt update && sudo apt install -y curl jq bc
+curl -fsSL https://raw.githubusercontent.com/Code-of-The-Forbidden-One/TWAK/main/install-remote.sh | bash
+source ~/.bashrc
+twk init
+```
+
+After setup, you can use `twk` from any WSL terminal. If you use Windows Terminal, pin your WSL profile for quick access.
+
+### Tips for WSL users
+
+- **VS Code integration** - Run `code .` from WSL and VS Code connects automatically via the Remote-WSL extension. You can use the integrated terminal to run `twk` alongside your development workflow.
+- **Accessing from PowerShell** - You can call `twk` from PowerShell without opening a WSL window:
+  ```powershell
+  wsl twk status
+  wsl twk start 12345
+  ```
+- **Optional: fzf for interactive picking** - `sudo apt install -y fzf` enables the fuzzy finder for `twk start` without arguments.
+
+---
+
 ## Parallel Tracking
 
 `twk` supports tracking multiple work items simultaneously. You can have several sessions active at once and switch between them freely.

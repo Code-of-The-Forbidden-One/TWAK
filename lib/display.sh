@@ -342,6 +342,105 @@ render_show_item() {
     printf '%s\n' "${description}" | fold -s -w 78
 }
 
+readonly USERS_ID_WIDTH=36
+readonly USERS_NAME_WIDTH=25
+readonly USERS_EMAIL_WIDTH=32
+
+cmd_users() {
+    config_require
+
+    local all=false
+    local arg
+    for arg in "$@"; do
+        case "${arg}" in
+            --all) all=true ;;
+            *)
+                echo "Error: unknown argument '${arg}' for users." >&2
+                echo "Usage: twk users [--all]" >&2
+                return 1
+                ;;
+        esac
+    done
+
+    local users_tsv
+    local heading
+    if [[ "${all}" == true ]]; then
+        heading="Users in the Azure DevOps organisation:"
+        local response
+        response="$(azdo_fetch_org_users 2>/dev/null)" || {
+            echo "Error: could not query org-wide users from Azure DevOps." >&2
+            echo "       The Graph API needs 'Graph (Read)' scope on your PAT, in" >&2
+            echo "       addition to 'Work Items (Read & Write)'. Regenerate your" >&2
+            echo "       PAT with the extra scope and re-run 'twk init'." >&2
+            return 1
+        }
+        users_tsv="$(echo "${response}" | jq -r '
+            [
+                .value[]?
+                | select(.subjectKind == "user")
+                | { id: (.descriptor // "-"), name: (.displayName // "-"), email: (.principalName // .mailAddress // "-") }
+                | select(.email != "-")
+            ]
+            | unique_by(.email)
+            | sort_by(.name | ascii_downcase)
+            | .[]
+            | "\(.id)\t\(.name)\t\(.email)"
+        ')"
+    else
+        heading="Users assigned to current sprint items:"
+        local items_json
+        items_json="$(fetch_current_sprint_items)" || return 1
+        users_tsv="$(echo "${items_json}" | jq -r '
+            [
+                .value[]
+                | .fields["System.AssignedTo"]?
+                | select(. != null and (. | type) == "object")
+                | { id: (.id // "-"), name: (.displayName // "-"), email: (.uniqueName // "-") }
+            ]
+            | unique_by(.id)
+            | sort_by(.name | ascii_downcase)
+            | .[]
+            | "\(.id)\t\(.name)\t\(.email)"
+        ')"
+    fi
+
+    if [[ -z "${users_tsv}" ]]; then
+        if [[ "${all}" == true ]]; then
+            echo "No users returned from the org Graph API."
+        else
+            echo "No assigned users in current sprint."
+        fi
+        return
+    fi
+
+    local count
+    count="$(printf '%s\n' "${users_tsv}" | grep -c '^')"
+
+    local rule_width=$(( USERS_ID_WIDTH + USERS_NAME_WIDTH + USERS_EMAIL_WIDTH + 6 ))
+    local rule
+    rule="$(printf '─%.0s' $(seq 1 "${rule_width}"))"
+
+    {
+        echo "${heading}"
+        echo ""
+        echo "${rule}"
+        printf "  %-${USERS_ID_WIDTH}s %-${USERS_NAME_WIDTH}s %s\n" \
+            "ID" "Username" "Email"
+        echo "${rule}"
+
+        local id name email
+        while IFS=$'\t' read -r id name email; do
+            printf "  %-${USERS_ID_WIDTH}s %-${USERS_NAME_WIDTH}s %s\n" \
+                "$(truncate_title "${id}" "${USERS_ID_WIDTH}")" \
+                "$(truncate_title "${name}" "${USERS_NAME_WIDTH}")" \
+                "$(truncate_title "${email}" "${USERS_EMAIL_WIDTH}")"
+        done <<< "${users_tsv}"
+
+        echo "${rule}"
+        echo "(${count} user$( (( count != 1 )) && echo s ))"
+    } | twk_pager
+}
+
 cmd_show() {
     config_require
 

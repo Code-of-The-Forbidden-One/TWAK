@@ -58,8 +58,10 @@ When
 is omitted, the interactive picker lists current sprint items with
 already-running sessions hidden. Items with a paused session show
 .I "paused HH:MM:SS"
-to the right of their title. Titles are truncated to 40 characters
-with
+to the right of their title; the AzDO assignee
+.RI ( displayName )
+is shown in a column at the end of each row. Titles are truncated
+to 40 characters and assignee names to 15 characters, both with
 .IR ... .
 .TP
 .B pause \fR[\fItask\fR] [\fB\-\-state\fR \fIstate\fR]
@@ -88,18 +90,37 @@ timer session. Uses the configured done state by default, or a specific
 state via
 .BR \-\-state .
 .TP
-.B assign \fItask\fR \fIuser\fR
+.B assign \fR[\fItask\fR] [\fIuser\fR] [\fB\-\-me\fR] [\fB\-\-all\fR]
 PATCH
 .I System.AssignedTo
-on the work item to assign it to the given user. The
+on the work item. The
 .I task
 argument supports the usual resolution modes (numeric ID, title
-search, or interactive picker).
+search, or interactive picker when omitted).
 .I user
 must be an email address, display name, or unique name that
-Azure DevOps can resolve. If resolution fails, the PATCH fails
-and the work item is left unchanged. Read-only against local
-sessions; modifies AzDO state only.
+Azure DevOps can resolve. When omitted, an interactive user
+picker is shown — sprint-scoped by default.
+.IP
+.B \-\-me
+assigns the current PAT owner, derived from
+.IR /_apis/connectionData .
+Cannot be combined with an explicit user or with
+.BR \-\-all .
+.IP
+.B \-\-all
+opens the user picker against the org-wide Graph API rather
+than the sprint. Useful for assigning someone not yet on a
+sprint item. Requires the PAT to have
+.B "Graph (Read)"
+scope in addition to
+.BR "Work Items (Read & Write)" .
+Cannot be combined with an explicit user.
+.IP
+With both task and user explicit, no pickers are invoked. If
+user resolution fails, the PATCH fails and the work item is
+left unchanged. Read-only against local sessions; modifies
+AzDO state only.
 .TP
 .B undo \fR[\fItask\fR] [\fB\-\-state\fR \fIstate\fR]
 Remove the most recent event (start, resume, pause, or end) from the
@@ -186,6 +207,33 @@ The
 argument supports the same resolution modes as the session
 commands (numeric ID, title search, or omitted for the
 interactive picker).
+.TP
+.B users \fR[\fB\-\-all\fR]
+List unique users from the current sprint (default) or the entire
+Azure DevOps organisation
+.RB ( \-\-all ).
+Default mode aggregates
+.I System.AssignedTo
+across the iteration's items and prints a three-column table:
+ID (AzDO user UUID), Username
+.RI ( displayName ),
+and Email
+.RI ( "uniqueName / UPN" ).
+Useful for picking the right identifier to hand to
+.BR "twk assign" .
+Sprint-scoped — team members with no sprint assignments don't
+appear. Uses the existing
+.B "Work Items"
+PAT scope.
+.IP
+With
+.BR \-\-all ,
+the same table is populated from the AzDO Graph API. Returns
+every user in the org. Requires the PAT to have
+.B "Graph (Read)"
+scope in addition to the standard
+.BR "Work Items (Read & Write)" .
+Group entries are filtered out — only individual users appear.
 .TP
 .B pull
 For every uncommitted session, re-fetch the work item's title and

@@ -381,28 +381,56 @@ cmd_done() {
 cmd_assign() {
     config_require
 
-    if [[ $# -lt 2 ]]; then
-        echo "Error: 'twk assign' requires a task and a user." >&2
-        echo "Usage: twk assign <task> <user>" >&2
-        return 1
-    fi
-    if [[ $# -gt 2 ]]; then
+    local me=false
+    local all=false
+    local positional=()
+    local arg
+    for arg in "$@"; do
+        case "${arg}" in
+            --me)  me=true ;;
+            --all) all=true ;;
+            *)     positional+=("${arg}") ;;
+        esac
+    done
+
+    if [[ ${#positional[@]} -gt 2 ]]; then
         echo "Error: too many arguments." >&2
-        echo "Usage: twk assign <task> <user>" >&2
+        echo "Usage: twk assign [task] [user] [--me] [--all]" >&2
         return 1
     fi
 
-    local task_query="$1"
-    local user="$2"
+    local task_query="${positional[0]:-}"
+    local user="${positional[1]:-}"
 
-    if [[ -z "${user}" ]]; then
-        echo "Error: user must not be empty." >&2
-        echo "Usage: twk assign <task> <user>" >&2
+    if [[ "${me}" == true ]] && [[ -n "${user}" ]]; then
+        echo "Error: --me cannot be combined with an explicit user." >&2
+        return 1
+    fi
+    if [[ "${me}" == true ]] && [[ "${all}" == true ]]; then
+        echo "Error: --me and --all are mutually exclusive." >&2
+        return 1
+    fi
+    if [[ "${all}" == true ]] && [[ -n "${user}" ]]; then
+        echo "Error: --all cannot be combined with an explicit user (it scopes the picker)." >&2
         return 1
     fi
 
     local work_item_id
     work_item_id="$(resolve_work_item "${task_query}")" || return 1
+
+    if [[ "${me}" == true ]]; then
+        user="$(resolve_self)" || return 1
+    elif [[ -z "${user}" ]]; then
+        local scope="sprint"
+        [[ "${all}" == true ]] && scope="org"
+        user="$(resolve_user_interactive "${scope}")" || return 1
+    fi
+
+    if [[ -z "${user}" ]]; then
+        echo "Error: user must not be empty." >&2
+        echo "Usage: twk assign [task] [user] [--me] [--all]" >&2
+        return 1
+    fi
 
     if azdo_update_assigned_to "${work_item_id}" "${user}" > /dev/null 2>&1; then
         echo "Assigned #${work_item_id} to ${user}"

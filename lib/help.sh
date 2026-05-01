@@ -47,8 +47,10 @@ When omitted, the interactive picker lists current sprint items
 with running sessions hidden (you can't start something already
 running). Items with a paused session show 'paused HH:MM:SS' to
 the right of their title so you can see how much time is already
-on them before resuming. Long titles are truncated to 40 chars
-with '...'.
+on them before resuming. The picker also shows the AzDO assignee
+(displayName) per item so you can tell at a glance who owns
+what. Long titles are truncated to 40 chars and assignee names
+to 15 chars, both with '...'.
 
 Examples:
     twk start 12345                     Start by work item ID
@@ -132,25 +134,39 @@ HELP
 twk assign - Assign a work item to a user in Azure DevOps
 
 Usage:
-    twk assign <task> <user>
+    twk assign [task] [user] [--me] [--all]
 
 Arguments:
-    <task>   Work item ID, partial title, or omit for the
+    [task]   Work item ID, partial title, or omit for the
              current-sprint interactive picker
-    <user>   Email, display name, or unique name as recognised
-             by your Azure DevOps organisation
+    [user]   Email, display name, or unique name as recognised
+             by your Azure DevOps organisation. Omit for the
+             interactive user picker
+
+Options:
+    --me     Assign yourself, derived from the PAT's identity
+             via /_apis/connectionData. Cannot be combined with
+             an explicit user or with --all.
+    --all    Use the org-wide user picker (Graph API) instead of
+             the default sprint-scoped one. Useful when assigning
+             someone who isn't yet on a sprint item. Requires
+             'Graph (Read)' scope on your PAT in addition to
+             'Work Items (Read & Write)'.
 
 PATCHes System.AssignedTo on the work item. Does not touch any
 local session — assignment is purely an AzDO state change.
 
-If the user can't be resolved by AzDO (typo, not in the org,
-disabled account), the PATCH fails and twk reports the error.
-The work item is left unchanged.
+The user picker (default) only lists people already assigned to
+a sprint item. Use --all to pick from the entire org. Use --me
+to skip the picker and assign yourself.
 
 Examples:
-    twk assign 12345 luke@example.com
-    twk assign 12345 "Luke McCann"
-    twk assign "auth refactor" alice@example.com
+    twk assign                    Pick task, then pick user (sprint)
+    twk assign 12345              Task is set, pick user (sprint)
+    twk assign 12345 --me         Assign yourself
+    twk assign 12345 --all        Pick user from org-wide list
+    twk assign 12345 luke@...     Both set, no pickers
+    twk assign --me               Pick task, assign yourself
 HELP
             ;;
         undo)
@@ -275,6 +291,39 @@ Examples:
     twk show 12345               Look up by ID
     twk show "login bug"         Title-search the current sprint
     twk show                     Pick interactively
+HELP
+            ;;
+        users)
+            cat <<'HELP'
+twk users - List users from the sprint or the entire org
+
+Usage:
+    twk users [--all]
+
+Options:
+    --all    Pull the user list from the AzDO Graph API instead
+             of aggregating from sprint items. Requires the PAT
+             to have 'Graph (Read)' scope on top of 'Work Items
+             (Read & Write)'. Returns every user in the org, not
+             just those assigned to current sprint items.
+
+Default (sprint-scoped) aggregates System.AssignedTo across
+every work item in the current sprint and prints unique users
+as a three-column table: ID (AzDO user UUID), Username
+(displayName), and Email (uniqueName / UPN).
+
+With --all, the same table is populated from the org Graph API.
+Group entries are filtered out — only individual users appear.
+The ID column shows the user's descriptor (a longer opaque ID)
+rather than the UUID, since that's what the Graph API returns.
+
+Useful for finding the right identifier to pass to
+'twk assign <task> <user>'. Email tends to be the most reliable
+identifier; AzDO accepts any of the three columns when assigning.
+
+Output is piped through 'less -FRX' when stdout is a TTY (set
+TWK_NO_PAGER=1 to opt out, or PAGER='' to disable). Falls back
+to cat if less isn't installed.
 HELP
             ;;
         pull)

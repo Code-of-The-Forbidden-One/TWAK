@@ -180,7 +180,7 @@ resolve_interactive() {
     local raw_items
     raw_items="$(echo "${work_items_json}" | jq -r '
         .value[]
-        | "\(.id)\t\(.fields["System.WorkItemType"])\t\(.fields["System.Title"])\t\(.fields["System.State"])"
+        | "\(.id)\t\(.fields["System.WorkItemType"])\t\(.fields["System.Title"])\t\(.fields["System.State"])\t\(.fields["System.AssignedTo"].displayName? // "-")"
     ')"
 
     if [[ -z "${raw_items}" ]]; then
@@ -189,11 +189,12 @@ resolve_interactive() {
     fi
 
     # Augment with local session info and drop items we can't start (running).
-    # Each output row: id<TAB>type<TAB>title<TAB>azdo_state<TAB>session_state<TAB>elapsed
+    # Each output row:
+    #   id<TAB>type<TAB>title<TAB>azdo_state<TAB>session_state<TAB>elapsed<TAB>assigned
     local items_list=""
-    local id type title azdo_state sess_state elapsed_str
+    local id type title azdo_state assigned sess_state elapsed_str
     local hidden_running=0
-    while IFS=$'\t' read -r id type title azdo_state; do
+    while IFS=$'\t' read -r id type title azdo_state assigned; do
         sess_state=""
         elapsed_str=""
         if session_exists "${id}"; then
@@ -204,7 +205,7 @@ resolve_interactive() {
             fi
             elapsed_str="$(format_duration "$(session_calculate_elapsed_seconds "${id}")")"
         fi
-        items_list+="${id}"$'\t'"${type}"$'\t'"$(truncate_title "${title}")"$'\t'"${azdo_state}"$'\t'"${sess_state}"$'\t'"${elapsed_str}"$'\n'
+        items_list+="${id}"$'\t'"${type}"$'\t'"$(truncate_title "${title}")"$'\t'"${azdo_state}"$'\t'"${sess_state}"$'\t'"${elapsed_str}"$'\t'"$(truncate_title "${assigned}" 15)"$'\n'
     done <<< "${raw_items}"
 
     items_list="${items_list%$'\n'}"
@@ -228,13 +229,17 @@ resolve_interactive() {
 resolve_with_fzf() {
     local items_list="$1"
 
+    # Always emit the same column layout. The "Sess" slot is "paused HH:MM:SS"
+    # for paused items and 15 spaces of padding otherwise so the Assigned
+    # column lines up across rows.
     local display_list
     display_list="$(echo "${items_list}" | awk -F'\t' '{
         if ($5 == "paused") {
-            printf "#%-7s [%-12s] %-10s %-40s paused %s\n", $1, $2, $4, $3, $6
+            sess = sprintf("paused %-8s", $6)
         } else {
-            printf "#%-7s [%-12s] %-10s %s\n", $1, $2, $4, $3
+            sess = sprintf("%-15s", "")
         }
+        printf "#%-7s [%-12s] %-10s %-40s %s %s\n", $1, $2, $4, $3, sess, $7
     }')"
 
     local selected
@@ -253,14 +258,14 @@ resolve_with_numbered_list() {
 
     echo "Current sprint work items:" >&2
     local index=1
-    local item_id item_type item_title item_state sess_state elapsed
-    while IFS=$'\t' read -r item_id item_type item_title item_state sess_state elapsed; do
+    local item_id item_type item_title item_state sess_state elapsed assigned
+    while IFS=$'\t' read -r item_id item_type item_title item_state sess_state elapsed assigned; do
         if [[ "${sess_state}" == "paused" ]]; then
-            printf "  %2d) #%-7s [%-12s] %-10s %-40s paused %s\n" \
-                "${index}" "${item_id}" "${item_type}" "${item_state}" "${item_title}" "${elapsed}" >&2
+            printf "  %2d) #%-7s [%-12s] %-10s %-40s paused %-8s %s\n" \
+                "${index}" "${item_id}" "${item_type}" "${item_state}" "${item_title}" "${elapsed}" "${assigned}" >&2
         else
-            printf "  %2d) #%-7s [%-12s] %-10s %s\n" \
-                "${index}" "${item_id}" "${item_type}" "${item_state}" "${item_title}" >&2
+            printf "  %2d) #%-7s [%-12s] %-10s %-40s %-15s %s\n" \
+                "${index}" "${item_id}" "${item_type}" "${item_state}" "${item_title}" "" "${assigned}" >&2
         fi
         index=$((index + 1))
     done <<< "${items_list}"
@@ -280,6 +285,162 @@ resolve_with_numbered_list() {
     fi
 
     echo "${items_list}" | sed -n "${selection}p" | cut -f1
+}
+
+resolve_self() {
+    # Returns the authenticated user's principalName (typically email/UPN)
+    # by querying connectionData. Used by 'twk assign --me'.
+    local response
+    response="$(azdo_fetch_authenticated_user 2>/dev/null)" || {
+        echo "Error: could not query authenticated user from Azure DevOps." >&2
+        echo "       Verify your PAT and that the organisation is reachable." >&2
+        return 1
+    }
+
+    local user
+    user="$(echo "${response}" | jq -r '
+        .authenticatedUser.principalName
+            // .authenticatedUser.uniqueName
+            // .authenticatedUser.mailAddress
+            // ""
+    ')"
+
+    if [[ -z "${user}" ]]; then
+        echo "Error: could not extract your identity from the AzDO connection response." >&2
+        return 1
+    fi
+
+    echo "${user}"
+}
+
+_user_picker_sprint_tsv() {
+    local items_json
+    items_json="$(fetch_current_sprint_items)" || return 1
+    echo "${items_json}" | jq -r '
+        [
+            .value[]
+            | .fields["System.AssignedTo"]?
+            | select(. != null and (. | type) == "object")
+            | { name: (.displayName // "-"), email: (.uniqueName // "-") }
+            | select(.email != "-")
+        ]
+        | unique_by(.email)
+        | sort_by(.name | ascii_downcase)
+        | .[]
+        | "\(.email)\t\(.name)"
+    '
+}
+
+_user_picker_org_tsv() {
+    local response
+    response="$(azdo_fetch_org_users 2>/dev/null)" || {
+        echo "Error: could not query org-wide users from Azure DevOps." >&2
+        echo "       The Graph API needs 'Graph (Read)' scope on your PAT, in" >&2
+        echo "       addition to 'Work Items (Read & Write)'. Regenerate your" >&2
+        echo "       PAT with the extra scope and re-run 'twk init'." >&2
+        return 1
+    }
+    echo "${response}" | jq -r '
+        [
+            .value[]?
+            | select(.subjectKind == "user")
+            | { name: (.displayName // "-"), email: (.principalName // .mailAddress // "-") }
+            | select(.email != "-")
+        ]
+        | unique_by(.email)
+        | sort_by(.name | ascii_downcase)
+        | .[]
+        | "\(.email)\t\(.name)"
+    '
+}
+
+resolve_user_interactive() {
+    local scope="${1:-sprint}"
+
+    local users_tsv
+    case "${scope}" in
+        sprint) users_tsv="$(_user_picker_sprint_tsv)" || return 1 ;;
+        org)    users_tsv="$(_user_picker_org_tsv)" || return 1 ;;
+        *)
+            echo "Error: unknown user scope '${scope}'." >&2
+            return 1
+            ;;
+    esac
+
+    if [[ -z "${users_tsv}" ]]; then
+        if [[ "${scope}" == "org" ]]; then
+            echo "Error: no users returned from the org Graph API." >&2
+        else
+            echo "Error: no users assigned to current sprint items to choose from." >&2
+            echo "       Pass the user explicitly, retry with '--all' for org-wide," >&2
+            echo "       or use '--me' to assign yourself." >&2
+        fi
+        return 1
+    fi
+
+    local items=()
+    local line
+    while IFS= read -r line; do
+        items+=("${line}")
+    done <<< "${users_tsv}"
+
+    if [[ "${#items[@]}" -eq 1 ]]; then
+        printf '%s\n' "${items[0]}" | cut -f1
+        return
+    fi
+
+    if command -v fzf &> /dev/null; then
+        resolve_user_with_fzf "${items[@]}"
+    else
+        resolve_user_with_numbered_list "${items[@]}"
+    fi
+}
+
+resolve_user_with_fzf() {
+    local items=("$@")
+
+    local selected
+    selected="$(printf '%s\n' "${items[@]}" \
+        | fzf --prompt="Select user to assign: " \
+              --delimiter=$'\t' \
+              --with-nth=1,2 \
+              --reverse --height=20)"
+
+    if [[ -z "${selected}" ]]; then
+        echo "Cancelled." >&2
+        return 1
+    fi
+
+    printf '%s\n' "${selected}" | cut -f1
+}
+
+resolve_user_with_numbered_list() {
+    local items=("$@")
+
+    echo "Users assigned to current sprint:" >&2
+    local index=1
+    local email name item
+    for item in "${items[@]}"; do
+        IFS=$'\t' read -r email name <<< "${item}"
+        printf "  %2d) %-32s %s\n" "${index}" "${email}" "${name}" >&2
+        index=$((index + 1))
+    done
+
+    local total=${#items[@]}
+    local selection
+    read -rp "Select [1-${total}] (enter to cancel): " selection
+
+    if [[ -z "${selection}" ]]; then
+        echo "Cancelled." >&2
+        return 1
+    fi
+
+    if ! [[ "${selection}" =~ ^[0-9]+$ ]] || [[ "${selection}" -lt 1 ]] || [[ "${selection}" -gt "${total}" ]]; then
+        echo "Error: invalid selection '${selection}'." >&2
+        return 1
+    fi
+
+    printf '%s\n' "${items[$((selection - 1))]}" | cut -f1
 }
 
 fetch_current_sprint_items() {

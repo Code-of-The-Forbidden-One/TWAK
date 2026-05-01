@@ -181,7 +181,7 @@ If a title search returns multiple matches, you will be prompted to choose.
 
 If the work item is currently paused, `twk start` resumes it automatically.
 
-The interactive picker hides items that already have a running session (you can't start them again). Items with a **paused** session show `paused HH:MM:SS` to the right of the title so you can see how much time is already on them before resuming. Titles are truncated to 40 characters with `...`. A short note like `(2 running sessions hidden)` is printed before the picker so you know what's been filtered out.
+The interactive picker hides items that already have a running session (you can't start them again). Items with a **paused** session show `paused HH:MM:SS` to the right of the title so you can see how much time is already on them before resuming. The AzDO assignee (display name) is shown in a column at the end of each row so you can tell at a glance who currently owns what. Titles are truncated to 40 characters and assignee names to 15 characters, both with `...`. A short note like `(2 running sessions hidden)` is printed before the picker so you know what's been filtered out.
 
 Use `--state` to update the work item state in Azure DevOps (e.g. `--state Doing`).
 
@@ -249,11 +249,26 @@ $ twk done 48215 --state "Code Review"
 
 ---
 
-### `twk assign <task> <user>`
+### `twk assign [task] [user] [--me] [--all]`
 
 Assigns a work item to a user in Azure DevOps. Does not affect any local session — assignment is purely an AzDO state change (PATCH on `System.AssignedTo`).
 
-The task argument supports the usual resolution modes (numeric ID, title search, or interactive picker). The user argument is whatever Azure DevOps recognises: email address, display name, or unique name.
+Both positional arguments are optional. Omit either or both to drop into an interactive picker:
+
+| Form                                 | Pickers shown                            |
+|--------------------------------------|------------------------------------------|
+| `twk assign`                         | Task picker, then sprint user picker     |
+| `twk assign 12345`                   | Sprint user picker                       |
+| `twk assign 12345 --me`              | None — assigns yourself                  |
+| `twk assign 12345 --all`             | Org-wide user picker (Graph API)         |
+| `twk assign 12345 luke@example.com`  | None — direct PATCH                      |
+
+**Flags:**
+
+- `--me` — assign yourself, derived from the PAT's identity via `/_apis/connectionData`. Cannot be combined with an explicit user or with `--all`.
+- `--all` — open the user picker against the org-wide Graph API instead of the sprint. Useful for assigning someone not yet on a sprint item. **Requires `Graph (Read)` scope on your PAT** in addition to `Work Items (Read & Write)`. Regenerate the PAT with the extra scope and re-run `twk init` if you haven't already.
+
+The task argument supports the usual resolution modes (numeric ID, title search). The user argument is whatever Azure DevOps recognises: email, display name, or unique name.
 
 ```
 $ twk assign 12345 luke@example.com
@@ -261,6 +276,14 @@ Assigned #12345 to luke@example.com
 
 $ twk assign "auth refactor" "Sarah Khan"
 Assigned #12347 to Sarah Khan
+
+$ twk assign 12345
+Users assigned to current sprint:
+   1) alice@example.com               Alice Khan
+   2) bob@example.com                 Bob Smith
+   3) sarah@example.com               Sarah Patel
+Select [1-3] (enter to cancel): 2
+Assigned #12345 to bob@example.com
 ```
 
 If the user can't be resolved (typo, not in the org, disabled account), the PATCH fails and the work item is left unchanged:
@@ -402,6 +425,36 @@ Notes:
 
 ---
 
+### `twk users [--all]`
+
+Lists users from the current sprint (default) or the entire Azure DevOps organisation (`--all`). Useful for finding the right identifier to pass to `twk assign <task> <user>` — every column shown here is something AzDO will accept on assignment, but `Email` tends to be the most reliable.
+
+```
+$ twk users
+Users assigned to current sprint items:
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────
+  ID                                   Username                  Email
+──────────────────────────────────────────────────────────────────────────────────────────────────────
+  3d4f1c70-12ab-4cde-9876-1234567890ab Alice Khan                alice@example.com
+  550e8400-e29b-41d4-a716-446655440000 Luke McCann               luke@example.com
+  9b8c7d6e-aabb-ccdd-eeff-001122334455 Sarah Patel               sarah@example.com
+──────────────────────────────────────────────────────────────────────────────────────────────────────
+(3 users)
+```
+
+Notes:
+
+- **Sprint-scoped by default**: only shows users actually assigned to a sprint item. Team members who aren't yet assigned anything don't appear.
+- **`--all` for the org-wide list**: pulls from the AzDO Graph API instead. Includes everyone in the organisation. Group entries are filtered out — only individual users appear. The ID column shows the user's *descriptor* (a longer opaque string) rather than the UUID. **Requires `Graph (Read)` scope** on your PAT in addition to `Work Items (Read & Write)` — regenerate your PAT with both scopes and re-run `twk init` if you haven't yet.
+- **Sorted** alphabetically by display name (case-insensitive).
+- **Deduplicated**: a user assigned to ten items shows up once.
+- Reuses your existing `Work Items (Read & Write)` PAT scope. No extra permissions needed.
+- Long usernames truncate at 25 chars with `...`; emails at 32.
+- Output auto-pages through `less -FRX` when long. Same opt-outs (`TWK_NO_PAGER=1`, `PAGER=''`) as `twk list`.
+
+---
+
 ### `twk pull`
 
 Refreshes the cached title/type metadata for every uncommitted session by re-fetching from Azure DevOps. Useful when:
@@ -527,6 +580,7 @@ Usage:
     twk cancel           Discard an uncommitted session
     twk list             List current sprint items with metadata
     twk show             Show one work item's full metadata + description
+    twk users            List unique users assigned to current sprint items
     twk pull             Refresh cached title/type for all sessions
     twk status           View uncommitted time entries
     twk commit           Push time entries to Azure DevOps
@@ -541,6 +595,8 @@ Options:
     --state <state>      (start, pause, end, done, undo, cancel) Set AzDO work item state
     --with-existing      (status only) Show post-commit projection (existing AzDO + tracked)
     -i, --interactive    (list only) Open in fzf with preview pane; prints selected ID
+    --me                 (assign only) Assign yourself based on the PAT's identity
+    --all                (assign, users) Use org-wide user list (Graph API; needs PAT scope)
 
 Environment:
     TWK_NO_PAGER         Disable the auto-pager for list / show / status.
@@ -674,11 +730,12 @@ Each line is an `event|unix_timestamp` pair. This format is human-readable, easy
 
 When creating your Personal Access Token, the minimum required scope is:
 
-| Scope                    | Access     | Purpose                                    |
-|--------------------------|------------|--------------------------------------------|
-| **Work Items**           | Read & Write | Fetch sprint items, update Completed Work |
+| Scope             | Access       | Required | Purpose                                                         |
+|-------------------|--------------|----------|-----------------------------------------------------------------|
+| **Work Items**    | Read & Write | ✅        | Fetch sprint items, update Completed Work, PATCH state/assignee |
+| **Graph**         | Read         | ❌ Optional | Enables `twk users --all` and `twk assign --all` (org-wide user listing) |
 
-Generate a PAT at: `https://dev.azure.com/{your-org}/_usersettings/tokens`
+Generate a PAT at: `https://dev.azure.com/{your-org}/_usersettings/tokens`. If you've already created one without `Graph (Read)` and want the `--all` flags to work, regenerate it with both scopes and re-run `twk init`.
 
 ---
 

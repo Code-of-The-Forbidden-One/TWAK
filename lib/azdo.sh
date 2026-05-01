@@ -44,6 +44,25 @@ azdo_api_request() {
     curl "${curl_args[@]}" "${url}"
 }
 
+azdo_fetch_authenticated_user() {
+    # Returns the connectionData JSON, including .authenticatedUser. The
+    # authenticatedUser.principalName is typically the UPN (email) and is
+    # what AzDO accepts as the value for System.AssignedTo on a PATCH.
+    local url
+    url="https://dev.azure.com/$(url_encode "${TWK_ORGANIZATION}")/_apis/connectionData?api-version=7.1"
+    azdo_api_request "GET" "${url}"
+}
+
+azdo_fetch_org_users() {
+    # Org-wide user list via the Graph API (preview). Requires the PAT
+    # to have at least 'Graph (Read)' scope on top of the standard
+    # 'Work Items (Read & Write)'. Returns a JSON object with a 'value'
+    # array of user descriptors.
+    local url
+    url="https://vssps.dev.azure.com/$(url_encode "${TWK_ORGANIZATION}")/_apis/graph/users?api-version=7.1-preview.1"
+    azdo_api_request "GET" "${url}"
+}
+
 azdo_test_connection() {
     local url
     url="https://dev.azure.com/$(url_encode "${TWK_ORGANIZATION}")/_apis/projects?api-version=7.1"

@@ -506,40 +506,16 @@ setup() {
 # cmd_assign — PATCH System.AssignedTo for a work item, no session touch.
 # -----------------------------------------------------------------------------
 
-@test "cmd_assign: errors when no args given" {
-    twk_write_fake_config
-
-    run cmd_assign
-    assert_status 1
-    assert_output_contains "requires a task and a user"
-    assert_output_contains "Usage: twk assign"
-}
-
-@test "cmd_assign: errors when only one arg given" {
-    twk_write_fake_config
-
-    run cmd_assign 12345
-    assert_status 1
-    assert_output_contains "requires a task and a user"
-}
-
 @test "cmd_assign: errors when too many args given" {
     twk_write_fake_config
 
     run cmd_assign 12345 a b
     assert_status 1
     assert_output_contains "too many arguments"
+    assert_output_contains "Usage: twk assign"
 }
 
-@test "cmd_assign: errors on empty user string" {
-    twk_write_fake_config
-
-    run cmd_assign 12345 ""
-    assert_status 1
-    assert_output_contains "must not be empty"
-}
-
-@test "cmd_assign: routes through resolve_work_item then PATCHes" {
+@test "cmd_assign: with both args specified PATCHes without invoking pickers" {
     twk_write_fake_config
 
     local captured_id="" captured_user=""
@@ -548,12 +524,139 @@ setup() {
         captured_user="$2"
         return 0
     }
+    # Pickers should not be called.
+    resolve_user_interactive() { echo "PICKER MUST NOT FIRE"; return 1; }
 
     run cmd_assign 12345 "luke@example.com"
     assert_status 0
     assert_output_contains "Assigned #12345 to luke@example.com"
     [[ "${captured_id}" == "12345" ]] || { echo "got id: ${captured_id}"; return 1; }
     [[ "${captured_user}" == "luke@example.com" ]] || { echo "got user: ${captured_user}"; return 1; }
+    [[ "${output}" != *"PICKER MUST NOT FIRE"* ]] || { echo "user picker fired despite explicit user"; return 1; }
+}
+
+@test "cmd_assign: with task only invokes user picker, then PATCHes" {
+    twk_write_fake_config
+
+    local captured_id="" captured_user=""
+    azdo_update_assigned_to() {
+        captured_id="$1"
+        captured_user="$2"
+        return 0
+    }
+    # Override the user picker to return a deterministic value.
+    resolve_user_interactive() { echo "alice@example.com"; }
+
+    run cmd_assign 12345
+    assert_status 0
+    assert_output_contains "Assigned #12345 to alice@example.com"
+    [[ "${captured_user}" == "alice@example.com" ]] || { echo "user not picked: ${captured_user}"; return 1; }
+}
+
+@test "cmd_assign: with no args invokes both pickers, then PATCHes" {
+    twk_write_fake_config
+
+    local captured_id="" captured_user=""
+    azdo_update_assigned_to() {
+        captured_id="$1"
+        captured_user="$2"
+        return 0
+    }
+    # Stub task resolver to return an ID without going to the network.
+    resolve_work_item() { echo "999"; }
+    resolve_user_interactive() { echo "bob@example.com"; }
+
+    run cmd_assign
+    assert_status 0
+    assert_output_contains "Assigned #999 to bob@example.com"
+    [[ "${captured_id}" == "999" ]] || { echo "task not picked: ${captured_id}"; return 1; }
+    [[ "${captured_user}" == "bob@example.com" ]] || { echo "user not picked: ${captured_user}"; return 1; }
+}
+
+@test "cmd_assign: aborts when user picker returns non-zero (user cancelled)" {
+    twk_write_fake_config
+
+    local patched=false
+    azdo_update_assigned_to() { patched=true; }
+    resolve_user_interactive() { return 1; }
+
+    run cmd_assign 12345
+    assert_status 1
+    [[ "${patched}" == false ]] || { echo "PATCH fired despite cancelled user picker"; return 1; }
+}
+
+@test "cmd_assign --me: assigns to the authenticated user from connectionData" {
+    twk_write_fake_config
+
+    local captured_id="" captured_user=""
+    azdo_update_assigned_to() {
+        captured_id="$1"
+        captured_user="$2"
+        return 0
+    }
+    resolve_self() { echo "me@example.com"; }
+    # Pickers must not fire for --me.
+    resolve_user_interactive() { echo "PICKER MUST NOT FIRE"; return 1; }
+
+    run cmd_assign 12345 --me
+    assert_status 0
+    assert_output_contains "Assigned #12345 to me@example.com"
+    [[ "${captured_user}" == "me@example.com" ]] || { echo "got user: ${captured_user}"; return 1; }
+    [[ "${output}" != *"PICKER MUST NOT FIRE"* ]] || { echo "user picker fired despite --me"; return 1; }
+}
+
+@test "cmd_assign --me with explicit user errors out" {
+    twk_write_fake_config
+
+    run cmd_assign 12345 luke@example.com --me
+    assert_status 1
+    assert_output_contains "--me cannot be combined with an explicit user"
+}
+
+@test "cmd_assign --me --all errors out (mutually exclusive)" {
+    twk_write_fake_config
+
+    run cmd_assign 12345 --me --all
+    assert_status 1
+    assert_output_contains "--me and --all are mutually exclusive"
+}
+
+@test "cmd_assign --all with explicit user errors out" {
+    twk_write_fake_config
+
+    run cmd_assign 12345 luke@example.com --all
+    assert_status 1
+    assert_output_contains "--all cannot be combined with an explicit user"
+}
+
+@test "cmd_assign --all: passes 'org' scope to the user picker" {
+    twk_write_fake_config
+
+    local captured_scope=""
+    resolve_user_interactive() {
+        captured_scope="$1"
+        echo "alice@example.com"
+    }
+    azdo_update_assigned_to() { return 0; }
+
+    run cmd_assign 12345 --all
+    assert_status 0
+    [[ "${captured_scope}" == "org" ]] || { echo "got scope: ${captured_scope}"; return 1; }
+}
+
+@test "cmd_assign without --all defaults to 'sprint' scope on the picker" {
+    twk_write_fake_config
+
+    local captured_scope=""
+    resolve_user_interactive() {
+        captured_scope="$1"
+        echo "alice@example.com"
+    }
+    azdo_update_assigned_to() { return 0; }
+
+    run cmd_assign 12345
+    assert_status 0
+    [[ "${captured_scope}" == "sprint" ]] || { echo "got scope: ${captured_scope}"; return 1; }
 }
 
 @test "cmd_assign: reports failure when AzDO PATCH fails" {

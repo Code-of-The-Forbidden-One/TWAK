@@ -199,6 +199,36 @@ setup() {
     [[ "${captured_body}" == *"20"* ]] || { echo "missing id 20"; return 1; }
 }
 
+@test "azdo_fetch_authenticated_user: GETs /_apis/connectionData on org base" {
+    export TWK_ORGANIZATION="acme"
+
+    local captured_method="" captured_url=""
+    azdo_api_request() {
+        captured_method="$1"
+        captured_url="$2"
+        printf '%s' '{"authenticatedUser":{"principalName":"luke@example.com"}}'
+    }
+
+    azdo_fetch_authenticated_user > /dev/null
+    [[ "${captured_method}" == "GET" ]] || { echo "method: ${captured_method}"; return 1; }
+    [[ "${captured_url}" == *"dev.azure.com/acme/_apis/connectionData"* ]] || { echo "url: ${captured_url}"; return 1; }
+}
+
+@test "azdo_fetch_org_users: GETs vssps graph/users on org" {
+    export TWK_ORGANIZATION="acme"
+
+    local captured_method="" captured_url=""
+    azdo_api_request() {
+        captured_method="$1"
+        captured_url="$2"
+        printf '%s' '{"value":[]}'
+    }
+
+    azdo_fetch_org_users > /dev/null
+    [[ "${captured_method}" == "GET" ]] || { echo "method: ${captured_method}"; return 1; }
+    [[ "${captured_url}" == *"vssps.dev.azure.com/acme/_apis/graph/users"* ]] || { echo "url: ${captured_url}"; return 1; }
+}
+
 @test "azdo_update_assigned_to: rc=1 on invalid id without calling api_request" {
     local sentinel="${BATS_TEST_TMPDIR}/api_request_called"
     azdo_api_request() { : > "${sentinel}"; }

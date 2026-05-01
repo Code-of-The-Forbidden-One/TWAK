@@ -750,6 +750,171 @@ setup() {
     assert_output_contains "Routed"
 }
 
+@test "cmd_users: rejects unexpected arguments" {
+    twk_write_fake_config
+
+    run cmd_users surplus
+    assert_status 1
+    assert_output_contains "takes no arguments"
+    assert_output_contains "Usage: twk users"
+}
+
+@test "cmd_users: prints 'no assigned users' when sprint has none" {
+    require_binary jq
+    twk_write_fake_config
+
+    fetch_current_sprint_items() {
+        printf '%s' '{"value":[
+            {"id":1,"fields":{"System.Title":"Unassigned A"}},
+            {"id":2,"fields":{"System.Title":"Unassigned B","System.AssignedTo":null}}
+        ]}'
+    }
+
+    run cmd_users
+    assert_status 0
+    assert_output_contains "No assigned users in current sprint."
+}
+
+@test "cmd_users: aggregates and deduplicates unique users" {
+    require_binary jq
+    twk_write_fake_config
+
+    fetch_current_sprint_items() {
+        printf '%s' '{"value":[
+            {"id":1,"fields":{"System.Title":"A","System.AssignedTo":{"id":"alice-id","displayName":"Alice","uniqueName":"alice@example.com"}}},
+            {"id":2,"fields":{"System.Title":"B","System.AssignedTo":{"id":"alice-id","displayName":"Alice","uniqueName":"alice@example.com"}}},
+            {"id":3,"fields":{"System.Title":"C","System.AssignedTo":{"id":"bob-id","displayName":"Bob","uniqueName":"bob@example.com"}}}
+        ]}'
+    }
+
+    run cmd_users
+    assert_status 0
+    assert_output_contains "Users assigned to current sprint items:"
+    assert_output_contains "ID"
+    assert_output_contains "Username"
+    assert_output_contains "Email"
+    assert_output_contains "alice-id"
+    assert_output_contains "Alice"
+    assert_output_contains "alice@example.com"
+    assert_output_contains "bob-id"
+    assert_output_contains "Bob"
+    assert_output_contains "bob@example.com"
+    assert_output_contains "(2 users)"
+
+    # Alice should appear exactly once despite being on two items.
+    local alice_count
+    alice_count="$(grep -c 'alice@example.com' <<< "${output}")"
+    [[ "${alice_count}" -eq 1 ]] || { echo "alice appeared ${alice_count} times"; return 1; }
+}
+
+@test "cmd_users: sorts by display name (case-insensitive)" {
+    require_binary jq
+    twk_write_fake_config
+
+    fetch_current_sprint_items() {
+        printf '%s' '{"value":[
+            {"id":1,"fields":{"System.AssignedTo":{"id":"z","displayName":"Zach","uniqueName":"zach@example.com"}}},
+            {"id":2,"fields":{"System.AssignedTo":{"id":"a","displayName":"alice","uniqueName":"alice@example.com"}}},
+            {"id":3,"fields":{"System.AssignedTo":{"id":"m","displayName":"Mike","uniqueName":"mike@example.com"}}}
+        ]}'
+    }
+
+    run cmd_users
+    assert_status 0
+    # Confirm row order via positions in output.
+    local alice_pos mike_pos zach_pos
+    alice_pos="$(printf '%s\n' "${output}" | grep -n 'alice@' | head -1 | cut -d: -f1)"
+    mike_pos="$(printf '%s\n' "${output}"  | grep -n 'mike@'  | head -1 | cut -d: -f1)"
+    zach_pos="$(printf '%s\n' "${output}"  | grep -n 'zach@'  | head -1 | cut -d: -f1)"
+    [[ "${alice_pos}" -lt "${mike_pos}" ]] || { echo "alice not before mike"; return 1; }
+    [[ "${mike_pos}" -lt "${zach_pos}" ]] || { echo "mike not before zach"; return 1; }
+}
+
+@test "cmd_users: legacy string AssignedTo is skipped (not crashes)" {
+    require_binary jq
+    twk_write_fake_config
+
+    fetch_current_sprint_items() {
+        # Mix the modern object form with the legacy string form. The
+        # string form should be filtered out by the `type == "object"`
+        # check rather than crashing the jq pipeline.
+        printf '%s' '{"value":[
+            {"id":1,"fields":{"System.AssignedTo":"legacy@example.com"}},
+            {"id":2,"fields":{"System.AssignedTo":{"id":"x","displayName":"Modern","uniqueName":"modern@example.com"}}}
+        ]}'
+    }
+
+    run cmd_users
+    assert_status 0
+    assert_output_contains "modern@example.com"
+    assert_output_contains "(1 user)"
+    [[ "${output}" != *"legacy@example.com"* ]] || { echo "legacy form leaked: ${output}"; return 1; }
+}
+
+@test "cmd_users --all: pulls from the org Graph API and skips groups" {
+    require_binary jq
+    twk_write_fake_config
+    config_global_file() { printf '%s\n' "${TWK_CONFIG_DIR}/config"; }
+    config_find_local() { return 1; }
+
+    azdo_fetch_org_users() {
+        printf '%s' '{"value":[
+            {"subjectKind":"user","descriptor":"aad.AAA","displayName":"Alice","principalName":"alice@example.com"},
+            {"subjectKind":"group","descriptor":"aad.GGG","displayName":"Team A","principalName":"team@example.com"},
+            {"subjectKind":"user","descriptor":"aad.BBB","displayName":"Bob","principalName":"bob@example.com"}
+        ]}'
+    }
+    # Sprint fetcher must not be called when --all is set.
+    fetch_current_sprint_items() { echo "SHOULD NOT FIRE"; return 1; }
+
+    run cmd_users --all
+    assert_status 0
+    assert_output_contains "Users in the Azure DevOps organisation:"
+    assert_output_contains "alice@example.com"
+    assert_output_contains "bob@example.com"
+    [[ "${output}" != *"team@example.com"* ]] || { echo "group leaked: ${output}"; return 1; }
+    [[ "${output}" != *"SHOULD NOT FIRE"* ]] || { echo "sprint fetcher fired"; return 1; }
+    assert_output_contains "(2 users)"
+}
+
+@test "cmd_users --all: reports PAT scope hint when Graph fetch fails" {
+    twk_write_fake_config
+    config_global_file() { printf '%s\n' "${TWK_CONFIG_DIR}/config"; }
+    config_find_local() { return 1; }
+
+    azdo_fetch_org_users() { return 1; }
+
+    run cmd_users --all
+    assert_status 1
+    assert_output_contains "Graph (Read)"
+}
+
+@test "cmd_users: rejects unknown flags" {
+    twk_write_fake_config
+    config_global_file() { printf '%s\n' "${TWK_CONFIG_DIR}/config"; }
+    config_find_local() { return 1; }
+
+    run cmd_users --bogus
+    assert_status 1
+    assert_output_contains "unknown argument '--bogus'"
+}
+
+@test "cmd_users: trailing count uses singular for one user" {
+    require_binary jq
+    twk_write_fake_config
+
+    fetch_current_sprint_items() {
+        printf '%s' '{"value":[
+            {"id":1,"fields":{"System.AssignedTo":{"id":"a","displayName":"Alone","uniqueName":"alone@example.com"}}}
+        ]}'
+    }
+
+    run cmd_users
+    assert_status 0
+    assert_output_contains "(1 user)"
+    [[ "${output}" != *"users)"* ]] || { echo "should be singular: ${output}"; return 1; }
+}
+
 @test "cmd_status: rejects unknown arguments with usage hint" {
     twk_write_fake_config
     config_global_file() { printf '%s\n' "${TWK_CONFIG_DIR}/config"; }

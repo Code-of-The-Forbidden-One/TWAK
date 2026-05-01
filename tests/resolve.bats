@@ -267,6 +267,71 @@ JSON
     assert_output_not_contains "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 }
 
+@test "resolve_interactive: shows assigned displayName column for each item" {
+    require_binary jq
+
+    run bash -c "
+        source '${TWK_REPO}/lib/config.sh'
+        source '${TWK_REPO}/lib/azdo.sh'
+        source '${TWK_REPO}/lib/resolve.sh'
+        source '${TWK_REPO}/lib/session.sh'
+        source '${TWK_REPO}/lib/display.sh'
+        export TWK_DATA_DIR='${TWK_DATA_DIR}'
+        export PATH='${PATH}'
+        fetch_current_sprint_items() { cat <<'JSON'
+$(cat <<'EOFINNER'
+{ "value": [
+  { "id": 401, "fields": { "System.WorkItemType": "Task", "System.Title": "Login bug",       "System.State": "Active", "System.AssignedTo": {"displayName": "Luke McCann"} } },
+  { "id": 402, "fields": { "System.WorkItemType": "Task", "System.Title": "Refactor auth",   "System.State": "Doing",  "System.AssignedTo": {"displayName": "Sarah Khan"} } },
+  { "id": 403, "fields": { "System.WorkItemType": "Task", "System.Title": "Audit code paths","System.State": "New" } }
+] }
+EOFINNER
+)
+JSON
+        }
+        echo 1 | resolve_interactive
+    "
+    assert_status 0
+    # Assigned names appear on their respective rows.
+    assert_output_contains "Luke McCann"
+    assert_output_contains "Sarah Khan"
+    # Unassigned third row renders '-' as the assignee.
+    assert_output_contains " -"
+    # The numbered row order matches the input order, so the selected ID
+    # should be 401 (the first item).
+    [[ "${output}" == *"401"* ]] || { echo "expected 401 in output"; return 1; }
+}
+
+@test "resolve_interactive: long assignee names truncate at 15 chars with '...'" {
+    require_binary jq
+
+    run bash -c "
+        source '${TWK_REPO}/lib/config.sh'
+        source '${TWK_REPO}/lib/azdo.sh'
+        source '${TWK_REPO}/lib/resolve.sh'
+        source '${TWK_REPO}/lib/session.sh'
+        source '${TWK_REPO}/lib/display.sh'
+        export TWK_DATA_DIR='${TWK_DATA_DIR}'
+        export PATH='${PATH}'
+        fetch_current_sprint_items() { cat <<'JSON'
+$(cat <<'EOFINNER'
+{ "value": [
+  { "id": 500, "fields": { "System.WorkItemType": "Task", "System.Title": "T",
+    "System.State": "Active",
+    "System.AssignedTo": {"displayName": "Maximilian Bartholomew Cunningham"} } }
+] }
+EOFINNER
+)
+JSON
+        }
+        echo 1 | resolve_interactive
+    "
+    assert_status 0
+    [[ "${output}" == *"Maximilian"* ]] || { echo "no head: ${output}"; return 1; }
+    [[ "${output}" == *"..."* ]] || { echo "no truncation suffix"; return 1; }
+    [[ "${output}" != *"Cunningham"* ]] || { echo "tail not truncated"; return 1; }
+}
+
 @test "resolve_interactive: rc=1 when sprint contains no items" {
     require_binary jq
 
@@ -368,6 +433,175 @@ EOF
     # Must NOT have proceeded to fetch items or batch.
     [[ "$(mock_azdo_call_count azdo_fetch_iteration_work_items)" -eq 0 ]]
     [[ "$(mock_azdo_call_count azdo_fetch_work_items_batch)" -eq 0 ]]
+}
+
+@test "resolve_self: returns principalName from connectionData" {
+    require_binary jq
+
+    azdo_fetch_authenticated_user() {
+        printf '%s' '{"authenticatedUser":{"principalName":"luke@example.com","displayName":"Luke McCann"}}'
+    }
+
+    run resolve_self
+    assert_status 0
+    [[ "${output}" == "luke@example.com" ]] || { echo "got: ${output}"; return 1; }
+}
+
+@test "resolve_self: falls back to mailAddress when principalName is missing" {
+    require_binary jq
+
+    azdo_fetch_authenticated_user() {
+        printf '%s' '{"authenticatedUser":{"mailAddress":"luke@example.com"}}'
+    }
+
+    run resolve_self
+    assert_status 0
+    [[ "${output}" == "luke@example.com" ]] || { echo "got: ${output}"; return 1; }
+}
+
+@test "resolve_self: errors when fetch fails" {
+    azdo_fetch_authenticated_user() { return 1; }
+
+    run resolve_self
+    assert_status 1
+    assert_output_contains "could not query authenticated user"
+}
+
+@test "resolve_self: errors when response has no identifiable user" {
+    require_binary jq
+
+    azdo_fetch_authenticated_user() {
+        printf '%s' '{"authenticatedUser":{}}'
+    }
+
+    run resolve_self
+    assert_status 1
+    assert_output_contains "could not extract your identity"
+}
+
+@test "resolve_user_interactive: org scope auto-selects single user from Graph API" {
+    require_binary jq
+
+    azdo_fetch_org_users() {
+        printf '%s' '{"value":[
+            {"subjectKind":"user","displayName":"Solo","principalName":"solo@example.com"}
+        ]}'
+    }
+
+    run resolve_user_interactive org
+    assert_status 0
+    [[ "${output}" == "solo@example.com" ]] || { echo "got: ${output}"; return 1; }
+}
+
+@test "resolve_user_interactive: org scope filters out non-user subjects" {
+    require_binary jq
+
+    azdo_fetch_org_users() {
+        printf '%s' '{"value":[
+            {"subjectKind":"group","displayName":"Team","principalName":"team@example.com"},
+            {"subjectKind":"user","displayName":"Real Person","principalName":"real@example.com"}
+        ]}'
+    }
+
+    run resolve_user_interactive org
+    assert_status 0
+    # Only the user (auto-selected since it's the only one) is returned.
+    [[ "${output}" == "real@example.com" ]] || { echo "got: ${output}"; return 1; }
+}
+
+@test "resolve_user_interactive: org scope error mentions PAT scope when fetch fails" {
+    azdo_fetch_org_users() { return 1; }
+
+    run resolve_user_interactive org
+    assert_status 1
+    assert_output_contains "Graph"
+}
+
+@test "resolve_user_interactive: rejects unknown scope" {
+    run resolve_user_interactive bogus
+    assert_status 1
+    assert_output_contains "unknown user scope"
+}
+
+@test "resolve_user_interactive: errors when sprint has no assigned users" {
+    require_binary jq
+
+    fetch_current_sprint_items() {
+        printf '%s' '{"value":[
+            {"id":1,"fields":{"System.Title":"Unassigned"}}
+        ]}'
+    }
+
+    run resolve_user_interactive
+    assert_status 1
+    assert_output_contains "no users assigned to current sprint"
+}
+
+@test "resolve_user_interactive: auto-selects when exactly one user is assigned" {
+    require_binary jq
+
+    fetch_current_sprint_items() {
+        printf '%s' '{"value":[
+            {"id":1,"fields":{"System.AssignedTo":{"id":"a","displayName":"Alone","uniqueName":"alone@example.com"}}}
+        ]}'
+    }
+
+    run resolve_user_interactive
+    assert_status 0
+    [[ "${output}" == "alone@example.com" ]] || { echo "got: ${output}"; return 1; }
+}
+
+@test "resolve_user_interactive: deduplicates users assigned to multiple items" {
+    require_binary jq
+
+    fetch_current_sprint_items() {
+        # Same user assigned to two items.
+        printf '%s' '{"value":[
+            {"id":1,"fields":{"System.AssignedTo":{"id":"a","displayName":"Alice","uniqueName":"alice@example.com"}}},
+            {"id":2,"fields":{"System.AssignedTo":{"id":"a","displayName":"Alice","uniqueName":"alice@example.com"}}}
+        ]}'
+    }
+
+    run resolve_user_interactive
+    assert_status 0
+    # Only one unique user → auto-selected.
+    [[ "${output}" == "alice@example.com" ]] || { echo "got: ${output}"; return 1; }
+}
+
+@test "resolve_user_interactive: numbered list path returns the picked email" {
+    require_binary jq
+
+    fetch_current_sprint_items() {
+        printf '%s' '{"value":[
+            {"id":1,"fields":{"System.AssignedTo":{"id":"a","displayName":"Alice","uniqueName":"alice@example.com"}}},
+            {"id":2,"fields":{"System.AssignedTo":{"id":"b","displayName":"Bob","uniqueName":"bob@example.com"}}}
+        ]}'
+    }
+
+    # Pick #2 (Bob). fzf is hidden by twk_setup_env so the numbered-list
+    # path runs. Feed the selection on stdin.
+    run bash -c '
+        source "'"${TWK_REPO}"'/lib/config.sh"
+        source "'"${TWK_REPO}"'/lib/azdo.sh"
+        source "'"${TWK_REPO}"'/lib/resolve.sh"
+        source "'"${TWK_REPO}"'/lib/session.sh"
+        source "'"${TWK_REPO}"'/lib/display.sh"
+        # Hide fzf in this subshell so the numbered-list branch runs.
+        command() {
+            if [[ "${1:-}" == "-v" && "${2:-}" == "fzf" ]]; then return 1; fi
+            builtin command "$@"
+        }
+        export -f command
+        fetch_current_sprint_items() {
+            printf "%s" '"'"'{"value":[
+                {"id":1,"fields":{"System.AssignedTo":{"id":"a","displayName":"Alice","uniqueName":"alice@example.com"}}},
+                {"id":2,"fields":{"System.AssignedTo":{"id":"b","displayName":"Bob","uniqueName":"bob@example.com"}}}
+            ]}'"'"'
+        }
+        echo 2 | resolve_user_interactive
+    '
+    assert_status 0
+    assert_output_contains "bob@example.com"
 }
 
 @test "fetch_current_sprint_items: rc=1 with 'no work items' when iteration has no relations" {

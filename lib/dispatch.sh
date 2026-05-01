@@ -27,6 +27,7 @@ Usage:
     twk cancel           Discard an uncommitted session
     twk list             List current sprint items with metadata
     twk show             Show one work item's full metadata + description
+    twk users            List unique users assigned to current sprint items
     twk pull             Refresh cached title/type for all sessions
     twk status           View uncommitted time entries
     twk commit           Push time entries to Azure DevOps
@@ -41,6 +42,8 @@ Options:
     --state <state>      (start, pause, end, done, undo, cancel) Set AzDO work item state
     --with-existing      (status only) Show post-commit projection (existing AzDO + tracked)
     -i, --interactive    (list only) Open in fzf with preview pane; prints selected ID
+    --me                 (assign only) Assign yourself based on the PAT's identity
+    --all                (assign, users) Use org-wide user list (Graph API; needs PAT scope)
 
 Pass --help (or -h) to any subcommand for full per-command help.
 
@@ -71,6 +74,7 @@ main() {
         cancel)  cmd_cancel "$@" ;;
         list)    cmd_list "$@" ;;
         show)    cmd_show "$@" ;;
+        users)   cmd_users "$@" ;;
         pull)    cmd_pull "$@" ;;
         status)  cmd_status "$@" ;;
         commit)  cmd_commit "$@" ;;

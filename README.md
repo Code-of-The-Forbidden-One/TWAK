@@ -1,8 +1,14 @@
-# twk - Time Worked and Committed
+<p align="center">
+  <img src="images/twk_banner.png" alt="TWAK Banner" width="100%" />
+</p>
 
-A lightweight CLI for tracking time against Azure DevOps work items, directly from the terminal.
+<h1 align="center">TWAK - Time Worked and Committed</h1>
 
-`twk` lets you start, pause, and end timing sessions on sprint work items locally, then commit the accumulated hours back to Azure DevOps in a single push. Track time without leaving your terminal.
+<p align="center">
+  A lightweight CLI for tracking time against Azure DevOps work items, directly from the terminal.
+  <br />
+  Start, pause, and end timing sessions locally, then commit hours back to your board in one push.
+</p>
 
 ---
 
@@ -19,15 +25,23 @@ A lightweight CLI for tracking time against Azure DevOps work items, directly fr
 
 All required dependencies are standard on most Linux distributions. If `fzf` is not installed, `twk` falls back to a numbered list for interactive selection.
 
-### Install
+### Quick Install (one-liner)
 
 ```bash
-git clone <repository-url>
-cd twk
+curl -fsSL https://raw.githubusercontent.com/Code-of-The-Forbidden-One/TWAK/main/install-remote.sh | bash
+```
+
+This clones the repo to `~/.local/share/twk` and symlinks the binary to `~/.local/bin/twk`. Run the same command again to update.
+
+### Manual Install
+
+```bash
+git clone git@github.com:Code-of-The-Forbidden-One/TWAK.git
+cd TWAK
 ./install.sh
 ```
 
-This creates a symlink at `~/.local/bin/twk`. If `~/.local/bin` is not in your `PATH`, add it to your shell profile:
+If `~/.local/bin` is not in your `PATH`, add it to your shell profile:
 
 ```bash
 export PATH="${HOME}/.local/bin:${PATH}"

@@ -262,7 +262,7 @@ HELP
 twk list - List current sprint items with metadata
 
 Usage:
-    twk list [-i|--interactive]
+    twk list [-i|--interactive] [--sort=<col>]
 
 Options:
     -i, --interactive   Open the list in fzf with a preview pane
@@ -273,6 +273,23 @@ Options:
                         'twk start "$(twk list -i)"'). Esc/Ctrl-C
                         exits without selecting. Requires fzf on
                         PATH.
+
+    --sort=<col>        Sort items by the named column before
+                        rendering. Valid columns:
+
+                            id        numeric work item ID
+                            title     case-insensitive title
+                            state     AzDO state (Active, Doing, ...)
+                            pri       priority (1 = highest)
+                            est       Original Estimate (hours)
+                            done      Time logged on AzDO (hours)
+                            assigned  assignee display name
+
+                        Prefix with '-' for descending order:
+                        --sort=-done sorts most-worked-on first.
+                        Items with missing values for the sort key
+                        sort to the end either way (numeric: high
+                        sentinel; string: 'zzz').
 
 Prints every work item in the current sprint as a single-row
 table summary plus a description sub-line indented underneath:

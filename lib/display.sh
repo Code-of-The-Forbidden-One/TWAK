@@ -89,8 +89,12 @@ twk_pager() {
     if [[ -z "${pager}" ]]; then
         cat
     else
+        # LESSCHARSET=utf-8 forces less to handle multi-byte UTF-8 (box-
+        # drawing chars, em-dashes, etc.) correctly even when the system
+        # locale is POSIX/C — common in slim Docker images. Other pagers
+        # ignore the unfamiliar env var.
         # shellcheck disable=SC2086  # intentional word-splitting on pager command
-        ${pager}
+        LESSCHARSET=utf-8 ${pager}
     fi
 }
 
@@ -172,6 +176,48 @@ render_list_item() {
         | awk -v ind="${LIST_DESC_INDENT}" '{ print ind $0 }'
 }
 
+sort_list_items() {
+    # Sort a workitemsbatch response's .value[] by the named column.
+    # Args: <batch_json> <column> <desc-bool>
+    # Echoes the sorted JSON. Missing/null values for the sort key sort to
+    # the end (high sentinel for numbers, "zzz" for strings).
+    local batch="$1"
+    local col="$2"
+    local desc="$3"
+
+    local sorted
+    sorted="$(printf '%s' "${batch}" | jq \
+        --arg col "${col}" \
+        --arg task_field "${TWK_TIME_FIELD_TASK}" \
+        --arg feat_field "${TWK_TIME_FIELD_FEATURE}" '
+        .value = (
+            .value
+            | sort_by(
+                if   $col == "id"       then .id
+                elif $col == "title"    then (.fields["System.Title"] // "" | ascii_downcase)
+                elif $col == "state"    then (.fields["System.State"] // "")
+                elif $col == "pri"      then (.fields["Microsoft.VSTS.Common.Priority"] // 999)
+                elif $col == "est"      then (.fields["Microsoft.VSTS.Scheduling.OriginalEstimate"] // 999999)
+                elif $col == "done"     then (
+                    if .fields["System.WorkItemType"] == "Feature"
+                    then (.fields[$feat_field] // 999999)
+                    else (.fields[$task_field] // 999999)
+                    end
+                )
+                elif $col == "assigned" then (.fields["System.AssignedTo"].displayName? // "zzz" | ascii_downcase)
+                else 0
+                end
+            )
+        )
+    ')"
+
+    if [[ "${desc}" == true ]]; then
+        sorted="$(printf '%s' "${sorted}" | jq '.value |= reverse')"
+    fi
+
+    printf '%s' "${sorted}"
+}
+
 cmd_list_interactive() {
     local batch_response="$1"
     local iteration_name="$2"
@@ -219,13 +265,35 @@ cmd_list() {
     config_require
 
     local interactive=false
+    local sort_col=""
+    local sort_desc=false
     local arg
     for arg in "$@"; do
         case "${arg}" in
             -i|--interactive) interactive=true ;;
+            --sort=*)
+                sort_col="${arg#--sort=}"
+                if [[ "${sort_col}" == -* ]]; then
+                    sort_desc=true
+                    sort_col="${sort_col#-}"
+                fi
+                case "${sort_col}" in
+                    id|title|state|pri|est|done|assigned) ;;
+                    "")
+                        echo "Error: --sort requires a column name." >&2
+                        echo "Valid: id, title, state, pri, est, done, assigned" >&2
+                        return 1
+                        ;;
+                    *)
+                        echo "Error: unknown sort column '${sort_col}'." >&2
+                        echo "Valid: id, title, state, pri, est, done, assigned" >&2
+                        return 1
+                        ;;
+                esac
+                ;;
             *)
                 echo "Error: unknown argument '${arg}' for list." >&2
-                echo "Usage: twk list [-i|--interactive]" >&2
+                echo "Usage: twk list [-i|--interactive] [--sort=<col>]" >&2
                 return 1
                 ;;
         esac
@@ -266,6 +334,10 @@ cmd_list() {
         echo "Error: failed to fetch work item details." >&2
         return 1
     }
+
+    if [[ -n "${sort_col}" ]]; then
+        batch_response="$(sort_list_items "${batch_response}" "${sort_col}" "${sort_desc}")"
+    fi
 
     if [[ "${interactive}" == true ]]; then
         cmd_list_interactive "${batch_response}" "${iteration_name}"

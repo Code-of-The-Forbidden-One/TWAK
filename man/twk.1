@@ -202,7 +202,7 @@ When
 is omitted, the interactive picker only lists existing sessions; a
 single match is selected automatically.
 .TP
-.B list \fR[\fB\-i\fR | \fB\-\-interactive\fR]
+.B list \fR[\fB\-i\fR | \fB\-\-interactive\fR] [\fB\-\-sort=\fR\fIcol\fR]
 List every work item in the current sprint as a single-row table
 summary (columns: ID, Title, State, Pri, Est, Done, Assigned) with
 the work item's description rendered as an indented sub-line beneath
@@ -230,6 +230,18 @@ the list opens in fzf with a preview pane showing the full
 description and metadata for whichever row is highlighted. On
 enter, the selected work item ID is printed to stdout. Requires
 fzf.
+.IP
+With
+.BI \-\-sort= col
+the items are sorted by the named column before rendering.
+Valid columns:
+.IR id ", " title ", " state ", " pri ", " est ", " done ", " assigned .
+Prefix with
+.B \-
+for descending order
+.RI ( --sort=-done
+puts the most-worked-on items first). Missing values sort to
+the end either way.
 .IP
 Output is piped through
 .B "less -FRX"

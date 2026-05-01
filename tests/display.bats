@@ -575,6 +575,211 @@ setup() {
     [[ -z "${output}" ]] || { echo "got: ${output}"; return 1; }
 }
 
+@test "cmd_list --sort: rejects unknown column with helpful message" {
+    twk_write_fake_config
+    config_global_file() { printf '%s\n' "${TWK_CONFIG_DIR}/config"; }
+    config_find_local() { return 1; }
+
+    run cmd_list --sort=bogus
+    assert_status 1
+    assert_output_contains "unknown sort column 'bogus'"
+    assert_output_contains "Valid: id, title, state, pri, est, done, assigned"
+}
+
+@test "cmd_list --sort: rejects bare flag with no column" {
+    twk_write_fake_config
+    config_global_file() { printf '%s\n' "${TWK_CONFIG_DIR}/config"; }
+    config_find_local() { return 1; }
+
+    run cmd_list --sort=
+    assert_status 1
+    assert_output_contains "--sort requires a column name"
+}
+
+@test "sort_list_items: ascending by id" {
+    require_binary jq
+
+    export TWK_TIME_FIELD_TASK="Custom.TaskTime"
+    export TWK_TIME_FIELD_FEATURE="Custom.FeatureTime"
+
+    local batch='{"value":[
+        {"id":3,"fields":{}},
+        {"id":1,"fields":{}},
+        {"id":2,"fields":{}}
+    ]}'
+
+    run sort_list_items "${batch}" "id" false
+    assert_status 0
+    local ids
+    ids="$(printf '%s' "${output}" | jq -r '[.value[].id] | join(",")')"
+    [[ "${ids}" == "1,2,3" ]] || { echo "got: ${ids}"; return 1; }
+}
+
+@test "sort_list_items: descending by id" {
+    require_binary jq
+
+    export TWK_TIME_FIELD_TASK="Custom.TaskTime"
+    export TWK_TIME_FIELD_FEATURE="Custom.FeatureTime"
+
+    local batch='{"value":[
+        {"id":1,"fields":{}},
+        {"id":3,"fields":{}},
+        {"id":2,"fields":{}}
+    ]}'
+
+    run sort_list_items "${batch}" "id" true
+    assert_status 0
+    local ids
+    ids="$(printf '%s' "${output}" | jq -r '[.value[].id] | join(",")')"
+    [[ "${ids}" == "3,2,1" ]] || { echo "got: ${ids}"; return 1; }
+}
+
+@test "sort_list_items: by priority puts missing-pri items at the end" {
+    require_binary jq
+
+    export TWK_TIME_FIELD_TASK="Custom.TaskTime"
+    export TWK_TIME_FIELD_FEATURE="Custom.FeatureTime"
+
+    local batch='{"value":[
+        {"id":1,"fields":{"Microsoft.VSTS.Common.Priority":3}},
+        {"id":2,"fields":{}},
+        {"id":3,"fields":{"Microsoft.VSTS.Common.Priority":1}},
+        {"id":4,"fields":{"Microsoft.VSTS.Common.Priority":2}}
+    ]}'
+
+    run sort_list_items "${batch}" "pri" false
+    assert_status 0
+    local ids
+    ids="$(printf '%s' "${output}" | jq -r '[.value[].id] | join(",")')"
+    # Order: pri=1 (id 3), pri=2 (id 4), pri=3 (id 1), no pri (id 2 → sentinel 999 → last)
+    [[ "${ids}" == "3,4,1,2" ]] || { echo "got: ${ids}"; return 1; }
+}
+
+@test "sort_list_items: by assigned uses displayName, missing → end" {
+    require_binary jq
+
+    export TWK_TIME_FIELD_TASK="Custom.TaskTime"
+    export TWK_TIME_FIELD_FEATURE="Custom.FeatureTime"
+
+    local batch='{"value":[
+        {"id":1,"fields":{"System.AssignedTo":{"displayName":"Charlie"}}},
+        {"id":2,"fields":{}},
+        {"id":3,"fields":{"System.AssignedTo":{"displayName":"Alice"}}},
+        {"id":4,"fields":{"System.AssignedTo":{"displayName":"Bob"}}}
+    ]}'
+
+    run sort_list_items "${batch}" "assigned" false
+    assert_status 0
+    local ids
+    ids="$(printf '%s' "${output}" | jq -r '[.value[].id] | join(",")')"
+    # Alice(3), Bob(4), Charlie(1), unassigned(2 → "zzz" sentinel)
+    [[ "${ids}" == "3,4,1,2" ]] || { echo "got: ${ids}"; return 1; }
+}
+
+@test "sort_list_items: by state ascending is alphabetical" {
+    require_binary jq
+
+    export TWK_TIME_FIELD_TASK="Custom.TaskTime"
+    export TWK_TIME_FIELD_FEATURE="Custom.FeatureTime"
+
+    local batch='{"value":[
+        {"id":1,"fields":{"System.State":"New"}},
+        {"id":2,"fields":{"System.State":"Active"}},
+        {"id":3,"fields":{"System.State":"Done"}},
+        {"id":4,"fields":{"System.State":"Doing"}}
+    ]}'
+
+    run sort_list_items "${batch}" "state" false
+    assert_status 0
+    local ids
+    ids="$(printf '%s' "${output}" | jq -r '[.value[].id] | join(",")')"
+    # Active(2), Doing(4), Done(3), New(1)
+    [[ "${ids}" == "2,4,3,1" ]] || { echo "got: ${ids}"; return 1; }
+}
+
+@test "sort_list_items: by done dispatches per-type (Task vs Feature)" {
+    require_binary jq
+
+    export TWK_TIME_FIELD_TASK="Custom.TaskTime"
+    export TWK_TIME_FIELD_FEATURE="Custom.FeatureTime"
+
+    local batch='{"value":[
+        {"id":1,"fields":{"System.WorkItemType":"Task","Custom.TaskTime":3.0}},
+        {"id":2,"fields":{"System.WorkItemType":"Feature","Custom.FeatureTime":1.0}},
+        {"id":3,"fields":{"System.WorkItemType":"Task","Custom.TaskTime":2.0}}
+    ]}'
+
+    run sort_list_items "${batch}" "done" false
+    assert_status 0
+    local ids
+    ids="$(printf '%s' "${output}" | jq -r '[.value[].id] | join(",")')"
+    # 1.0 (feature, id 2), 2.0 (task, id 3), 3.0 (task, id 1)
+    [[ "${ids}" == "2,3,1" ]] || { echo "got: ${ids}"; return 1; }
+}
+
+@test "cmd_list --sort: end-to-end happy path applies the sort to rendered rows" {
+    require_binary jq
+    twk_write_fake_config
+    config_global_file() { printf '%s\n' "${TWK_CONFIG_DIR}/config"; }
+    config_find_local() { return 1; }
+
+    azdo_fetch_current_iteration() {
+        printf '%s' '{"value":[{"id":"iter-1","name":"Sprint 23"}]}'
+    }
+    azdo_fetch_iteration_work_items() {
+        printf '%s' '{"workItemRelations":[
+            {"target":{"id":1}},
+            {"target":{"id":2}},
+            {"target":{"id":3}}
+        ]}'
+    }
+    azdo_fetch_sprint_with_details() {
+        printf '%s' '{"value":[
+            {"id":3,"fields":{"System.Title":"Charlie","System.WorkItemType":"Task","System.State":"Active","Microsoft.VSTS.Common.Priority":3}},
+            {"id":1,"fields":{"System.Title":"Alpha","System.WorkItemType":"Task","System.State":"New","Microsoft.VSTS.Common.Priority":1}},
+            {"id":2,"fields":{"System.Title":"Bravo","System.WorkItemType":"Task","System.State":"Doing","Microsoft.VSTS.Common.Priority":2}}
+        ]}'
+    }
+
+    run cmd_list --sort=pri
+    assert_status 0
+    # Verify Alpha (pri 1) appears before Bravo (pri 2) before Charlie (pri 3) in the rendered output.
+    local alpha_pos bravo_pos charlie_pos
+    alpha_pos="$(grep -n "Alpha" <<< "${output}" | head -1 | cut -d: -f1)"
+    bravo_pos="$(grep -n "Bravo" <<< "${output}" | head -1 | cut -d: -f1)"
+    charlie_pos="$(grep -n "Charlie" <<< "${output}" | head -1 | cut -d: -f1)"
+    [[ "${alpha_pos}" -lt "${bravo_pos}" ]] || { echo "Alpha not before Bravo"; return 1; }
+    [[ "${bravo_pos}" -lt "${charlie_pos}" ]] || { echo "Bravo not before Charlie"; return 1; }
+}
+
+@test "cmd_list --sort: descending prefix '-' reverses the order" {
+    require_binary jq
+    twk_write_fake_config
+    config_global_file() { printf '%s\n' "${TWK_CONFIG_DIR}/config"; }
+    config_find_local() { return 1; }
+
+    azdo_fetch_current_iteration() {
+        printf '%s' '{"value":[{"id":"iter-1","name":"Sprint 23"}]}'
+    }
+    azdo_fetch_iteration_work_items() {
+        printf '%s' '{"workItemRelations":[{"target":{"id":1}},{"target":{"id":2}}]}'
+    }
+    azdo_fetch_sprint_with_details() {
+        printf '%s' '{"value":[
+            {"id":1,"fields":{"System.Title":"Alpha","System.WorkItemType":"Task","System.State":"New"}},
+            {"id":2,"fields":{"System.Title":"Bravo","System.WorkItemType":"Task","System.State":"New"}}
+        ]}'
+    }
+
+    run cmd_list --sort=-id
+    assert_status 0
+    local alpha_pos bravo_pos
+    alpha_pos="$(grep -n "Alpha" <<< "${output}" | head -1 | cut -d: -f1)"
+    bravo_pos="$(grep -n "Bravo" <<< "${output}" | head -1 | cut -d: -f1)"
+    # Descending → Bravo (id 2) appears before Alpha (id 1).
+    [[ "${bravo_pos}" -lt "${alpha_pos}" ]] || { echo "descending sort didn't reverse: ${output}"; return 1; }
+}
+
 @test "cmd_list -i: errors when fzf is not on PATH" {
     require_binary jq
     twk_write_fake_config

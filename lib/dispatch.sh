@@ -52,6 +52,8 @@ Options:
     --state <state>      (start, pause, end, done, undo, cancel) Set AzDO work item state
     --with-existing      (status only) Show post-commit projection (existing AzDO + tracked)
     -i, --interactive    (list only) Open in fzf with preview pane; prints selected ID
+    --sort=<col>         (list only) Sort by column (id, title, state, pri, est, done,
+                         assigned). Prefix with '-' for descending: --sort=-done.
     --me                 (assign only) Assign yourself based on the PAT's identity
     --all                (assign, users) Use org-wide user list (Graph API; needs PAT scope)
     --discussion         (show only) Append the AzDO Discussion thread (comments)

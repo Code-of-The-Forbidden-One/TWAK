@@ -395,7 +395,7 @@ Cancelled #48215 (00:45:30 discarded)
 
 ---
 
-### `twk list [-i|--interactive]`
+### `twk list [-i|--interactive] [--sort=<col>]`
 
 Lists every work item in the current sprint with its full metadata. Useful for sprint overviews — what's there, what's been estimated, what's been done so far, and what each item is about — without leaving the terminal.
 
@@ -429,6 +429,29 @@ Notes:
 - **Missing values** (no priority, no estimate, no time logged) render as `-`.
 - The command hits AzDO directly — no offline mode. If the iteration or batch fetch fails, it prints a clear error and exits non-zero.
 - Long output auto-pages through `less -FRX` when stdout is a TTY. Short output (less than one screen) skips the pager because of less's `-F` flag. Set `TWK_NO_PAGER=1` to opt out, or `PAGER=''` to disable globally.
+
+**Sorting (`--sort=<col>`).** Items render in AzDO's batch order by default. Pass `--sort=<col>` to reorder by a specific column. Prefix the column name with `-` for descending.
+
+| Column | Meaning |
+|---|---|
+| `id` | Numeric work item ID |
+| `title` | Case-insensitive title |
+| `state` | AzDO state (Active, Doing, …) |
+| `pri` | Priority (1 = highest) |
+| `est` | Original Estimate (hours) |
+| `done` | Time logged on AzDO (hours) |
+| `assigned` | Assignee display name |
+
+Examples:
+
+```bash
+twk list --sort=pri          # priorities 1, 2, 3, ... at the top
+twk list --sort=-done        # most-worked-on items first
+twk list --sort=assigned     # group by assignee, alphabetical
+twk list --sort=-state       # state in reverse alpha (handy when "Doing" sorts before "New")
+```
+
+Missing values for the sort key sort to the end either way (numeric: high sentinel; string: `zzz`). So unassigned items appear at the bottom whether you sort `assigned` ascending or descending — they just stay at the end.
 
 **Interactive mode (`-i`).** With fzf installed, `twk list -i` opens the same data in a fzf-driven view: scroll, fuzzy-search, and see the full description in a preview pane on the right for whichever row is highlighted. On enter, the selected work item ID is printed to stdout — pipeable into other commands:
 
@@ -689,6 +712,8 @@ Options:
     --state <state>      (start, pause, end, done, undo, cancel) Set AzDO work item state
     --with-existing      (status only) Show post-commit projection (existing AzDO + tracked)
     -i, --interactive    (list only) Open in fzf with preview pane; prints selected ID
+    --sort=<col>         (list only) Sort by id|title|state|pri|est|done|assigned;
+                         prefix with '-' for descending: --sort=-done
     --me                 (assign only) Assign yourself based on the PAT's identity
     --all                (assign, users) Use org-wide user list (Graph API; needs PAT scope)
     --discussion         (show only) Append the AzDO Discussion thread (comments)

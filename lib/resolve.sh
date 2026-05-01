@@ -109,10 +109,15 @@ resolve_session_with_numbered_list() {
 
     local total=${#items[@]}
     local selection
-    read -rp "Select [1-${total}]: " selection
+    read -rp "Select [1-${total}] (enter to cancel): " selection
 
-    if [[ -z "${selection}" ]] || [[ "${selection}" -lt 1 ]] || [[ "${selection}" -gt "${total}" ]]; then
-        echo "Error: invalid selection." >&2
+    if [[ -z "${selection}" ]]; then
+        echo "Cancelled." >&2
+        return 1
+    fi
+
+    if ! [[ "${selection}" =~ ^[0-9]+$ ]] || [[ "${selection}" -lt 1 ]] || [[ "${selection}" -gt "${total}" ]]; then
+        echo "Error: invalid selection '${selection}'." >&2
         return 1
     fi
 
@@ -153,9 +158,15 @@ resolve_by_title() {
     done <<< "${matches}"
 
     local selection
-    read -rp "Select [1-${match_count}]: " selection
-    if [[ -z "${selection}" ]] || [[ "${selection}" -lt 1 ]] || [[ "${selection}" -gt "${match_count}" ]]; then
-        echo "Error: invalid selection." >&2
+    read -rp "Select [1-${match_count}] (enter to cancel): " selection
+
+    if [[ -z "${selection}" ]]; then
+        echo "Cancelled." >&2
+        return 1
+    fi
+
+    if ! [[ "${selection}" =~ ^[0-9]+$ ]] || [[ "${selection}" -lt 1 ]] || [[ "${selection}" -gt "${match_count}" ]]; then
+        echo "Error: invalid selection '${selection}'." >&2
         return 1
     fi
 
@@ -230,7 +241,7 @@ resolve_with_fzf() {
     selected="$(echo "${display_list}" | fzf --prompt="Select work item: " --height=20 --reverse)"
 
     if [[ -z "${selected}" ]]; then
-        echo "Error: no item selected." >&2
+        echo "Cancelled." >&2
         return 1
     fi
 
@@ -256,10 +267,15 @@ resolve_with_numbered_list() {
 
     local total_items=$((index - 1))
     local selection
-    read -rp "Select [1-${total_items}]: " selection
+    read -rp "Select [1-${total_items}] (enter to cancel): " selection
 
-    if [[ -z "${selection}" ]] || [[ "${selection}" -lt 1 ]] || [[ "${selection}" -gt "${total_items}" ]]; then
-        echo "Error: invalid selection." >&2
+    if [[ -z "${selection}" ]]; then
+        echo "Cancelled." >&2
+        return 1
+    fi
+
+    if ! [[ "${selection}" =~ ^[0-9]+$ ]] || [[ "${selection}" -lt 1 ]] || [[ "${selection}" -gt "${total_items}" ]]; then
+        echo "Error: invalid selection '${selection}'." >&2
         return 1
     fi
 

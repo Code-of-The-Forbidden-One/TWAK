@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+trap 'printf "\nCancelled.\n" >&2; exit 130' INT
+
 readonly TWK_VERSION="0.1.0"
 readonly TWK_SCRIPT="$(readlink -f "${BASH_SOURCE[0]}")"
 readonly TWK_ROOT="$(cd "$(dirname "${TWK_SCRIPT}")/.." && pwd)"

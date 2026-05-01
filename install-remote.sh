@@ -23,7 +23,7 @@ main() {
     chmod +x "${INSTALL_LOCATION}/bin/twk"
     chmod +x "${INSTALL_LOCATION}/install.sh"
 
-    "${INSTALL_LOCATION}/install.sh"
+    TWK_AUTO_CONFIGURE=true "${INSTALL_LOCATION}/install.sh"
 }
 
 main "$@"

@@ -180,6 +180,8 @@ If a title search returns multiple matches, you will be prompted to choose.
 
 If the work item is currently paused, `twk start` resumes it automatically.
 
+The interactive picker hides items that already have a running session (you can't start them again). Items with a **paused** session show `paused HH:MM:SS` to the right of the title so you can see how much time is already on them before resuming. Titles are truncated to 40 characters with `...`. A short note like `(2 running sessions hidden)` is printed before the picker so you know what's been filtered out.
+
 Use `--state` to update the work item state in Azure DevOps (e.g. `--state Doing`).
 
 ```

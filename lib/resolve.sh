@@ -166,15 +166,45 @@ resolve_interactive() {
     local work_items_json
     work_items_json="$(fetch_current_sprint_items)" || return 1
 
-    local items_list
-    items_list="$(echo "${work_items_json}" | jq -r '
+    local raw_items
+    raw_items="$(echo "${work_items_json}" | jq -r '
         .value[]
         | "\(.id)\t\(.fields["System.WorkItemType"])\t\(.fields["System.Title"])\t\(.fields["System.State"])"
     ')"
 
-    if [[ -z "${items_list}" ]]; then
+    if [[ -z "${raw_items}" ]]; then
         echo "Error: no work items found in current sprint." >&2
         return 1
+    fi
+
+    # Augment with local session info and drop items we can't start (running).
+    # Each output row: id<TAB>type<TAB>title<TAB>azdo_state<TAB>session_state<TAB>elapsed
+    local items_list=""
+    local id type title azdo_state sess_state elapsed_str
+    local hidden_running=0
+    while IFS=$'\t' read -r id type title azdo_state; do
+        sess_state=""
+        elapsed_str=""
+        if session_exists "${id}"; then
+            sess_state="$(session_read_state "${id}")"
+            if [[ "${sess_state}" == "${STATE_RUNNING}" ]]; then
+                hidden_running=$(( hidden_running + 1 ))
+                continue
+            fi
+            elapsed_str="$(format_duration "$(session_calculate_elapsed_seconds "${id}")")"
+        fi
+        items_list+="${id}"$'\t'"${type}"$'\t'"$(truncate_title "${title}")"$'\t'"${azdo_state}"$'\t'"${sess_state}"$'\t'"${elapsed_str}"$'\n'
+    done <<< "${raw_items}"
+
+    items_list="${items_list%$'\n'}"
+
+    if [[ -z "${items_list}" ]]; then
+        echo "Error: every sprint item is currently being tracked. Pause or end one first." >&2
+        return 1
+    fi
+
+    if [[ "${hidden_running}" -gt 0 ]]; then
+        echo "(${hidden_running} running session$( [[ ${hidden_running} -gt 1 ]] && echo s ) hidden)" >&2
     fi
 
     if command -v fzf &> /dev/null; then
@@ -188,7 +218,13 @@ resolve_with_fzf() {
     local items_list="$1"
 
     local display_list
-    display_list="$(echo "${items_list}" | awk -F'\t' '{ printf "#%-6s [%-12s] %-10s %s\n", $1, $2, $4, $3 }')"
+    display_list="$(echo "${items_list}" | awk -F'\t' '{
+        if ($5 == "paused") {
+            printf "#%-7s [%-12s] %-10s %-40s paused %s\n", $1, $2, $4, $3, $6
+        } else {
+            printf "#%-7s [%-12s] %-10s %s\n", $1, $2, $4, $3
+        }
+    }')"
 
     local selected
     selected="$(echo "${display_list}" | fzf --prompt="Select work item: " --height=20 --reverse)"
@@ -206,8 +242,15 @@ resolve_with_numbered_list() {
 
     echo "Current sprint work items:" >&2
     local index=1
-    while IFS=$'\t' read -r item_id item_type item_title item_state; do
-        printf "  %2d) #%-6s [%-12s] %-10s %s\n" "${index}" "${item_id}" "${item_type}" "${item_state}" "${item_title}" >&2
+    local item_id item_type item_title item_state sess_state elapsed
+    while IFS=$'\t' read -r item_id item_type item_title item_state sess_state elapsed; do
+        if [[ "${sess_state}" == "paused" ]]; then
+            printf "  %2d) #%-7s [%-12s] %-10s %-40s paused %s\n" \
+                "${index}" "${item_id}" "${item_type}" "${item_state}" "${item_title}" "${elapsed}" >&2
+        else
+            printf "  %2d) #%-7s [%-12s] %-10s %s\n" \
+                "${index}" "${item_id}" "${item_type}" "${item_state}" "${item_title}" >&2
+        fi
         index=$((index + 1))
     done <<< "${items_list}"
 

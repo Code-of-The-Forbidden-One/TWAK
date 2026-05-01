@@ -53,6 +53,14 @@ Start timing a work item. If the item is paused, resumes it instead.
 Use
 .B \-\-state
 to set the work item state in Azure DevOps (e.g. Doing, Active).
+When
+.I task
+is omitted, the interactive picker lists current sprint items with
+already-running sessions hidden. Items with a paused session show
+.I "paused HH:MM:SS"
+to the right of their title. Titles are truncated to 40 characters
+with
+.IR ... .
 .TP
 .B pause \fR[\fItask\fR] [\fB\-\-state\fR \fIstate\fR]
 Pause an active timing session. Elapsed time is preserved.

@@ -43,6 +43,13 @@ Arguments:
 Starts a new timing session. If the work item is currently paused,
 resumes it instead. Multiple work items can be tracked in parallel.
 
+When omitted, the interactive picker lists current sprint items
+with running sessions hidden (you can't start something already
+running). Items with a paused session show 'paused HH:MM:SS' to
+the right of their title so you can see how much time is already
+on them before resuming. Long titles are truncated to 40 chars
+with '...'.
+
 Examples:
     twk start 12345                     Start by work item ID
     twk start "login bug"               Start by partial title match

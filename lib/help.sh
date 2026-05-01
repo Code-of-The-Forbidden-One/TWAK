@@ -477,6 +477,61 @@ TWK_NO_PAGER=1 to opt out, or PAGER='' to disable). Falls back
 to cat if less isn't installed.
 HELP
             ;;
+        log)
+            cat <<'HELP'
+twk log - Browse history of committed time entries
+
+Usage:
+    twk log [--days=N | --all] [--by-id]
+
+Options:
+    --days=N    Limit history to the last N days (default: 7).
+                Days are computed from the commit timestamp baked
+                into each archived session's filename.
+    --all       Show every committed session ever, no date limit.
+    --by-id     Group output by work item ID instead of by date.
+                Each ID gets a subtotal; the grand total is at
+                the bottom either way.
+
+Reads ~/.local/share/twk/sessions/committed/, parses the commit
+timestamp from each archived session's filename, joins with the
+.meta sidecar (when present) for the title, and renders a
+chronological view of what you've pushed to AzDO.
+
+Local-only: hits no network, ignores PAT and config. Output is
+piped through 'less -FRX' when stdout is a TTY.
+
+Default layout (newest day first):
+
+    2026-05-02
+      #48210  Implement login button                   3.38h
+      #48215  Refactor auth middleware                 0.75h
+
+    2026-05-01
+      #48210  Implement login button                   2.20h
+
+    Total: 6.33h across 3 sessions.
+
+With --by-id (per-item subtotals):
+
+    #48210  Implement login button
+      2026-05-02  3.38h
+      2026-05-01  2.20h
+      Subtotal: 5.58h
+
+    #48215  Refactor auth middleware
+      2026-05-02  0.75h
+      Subtotal: 0.75h
+
+    Total: 6.33h across 3 sessions.
+
+Examples:
+    twk log
+    twk log --days=30
+    twk log --all
+    twk log --by-id --days=14
+HELP
+            ;;
         pull)
             cat <<'HELP'
 twk pull - Refresh cached metadata for every active session

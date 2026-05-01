@@ -709,6 +709,134 @@ cmd_show() {
     } | twk_pager
 }
 
+cmd_log() {
+    local days=7
+    local show_all=false
+    local by_id=false
+    local arg
+    for arg in "$@"; do
+        case "${arg}" in
+            --all)     show_all=true ;;
+            --by-id)   by_id=true ;;
+            --days=*)
+                days="${arg#--days=}"
+                if ! [[ "${days}" =~ ^[0-9]+$ ]]; then
+                    echo "Error: --days requires a non-negative integer." >&2
+                    return 1
+                fi
+                ;;
+            *)
+                echo "Error: unknown argument '${arg}' for log." >&2
+                echo "Usage: twk log [--days=N | --all] [--by-id]" >&2
+                return 1
+                ;;
+        esac
+    done
+
+    local committed_dir="${TWK_DATA_DIR}/committed"
+    if [[ ! -d "${committed_dir}" ]]; then
+        echo "No commits yet."
+        return
+    fi
+
+    local cutoff=0
+    if [[ "${show_all}" == false ]]; then
+        cutoff=$(( $(date +%s) - days * 86400 ))
+    fi
+
+    # Collect TSV rows: date<TAB>id<TAB>elapsed_seconds<TAB>title
+    local rows=""
+    local f fname id ts elapsed_seconds date_str title meta_file
+    for f in "${committed_dir}"/*.session; do
+        [[ -f "${f}" ]] || continue
+        fname="$(basename "${f}" .session)"
+        # Skip malformed names (need <id>_<ts> shape).
+        [[ "${fname}" == *_* ]] || continue
+        id="${fname%_*}"
+        ts="${fname##*_}"
+        # Numeric ts only.
+        [[ "${ts}" =~ ^[0-9]+$ ]] || continue
+
+        if [[ "${show_all}" == false ]] && [[ "${ts}" -lt "${cutoff}" ]]; then
+            continue
+        fi
+
+        elapsed_seconds="$(session_elapsed_from_path "${f}")"
+        date_str="$(date -d "@${ts}" +%Y-%m-%d 2>/dev/null || echo "?")"
+
+        title=""
+        meta_file="${committed_dir}/${id}_${ts}.meta"
+        if [[ -f "${meta_file}" ]]; then
+            title="$(jq -r '.title // ""' "${meta_file}" 2>/dev/null)"
+        fi
+        [[ -z "${title}" ]] && title="(no title cached)"
+
+        rows+="${date_str}"$'\t'"${id}"$'\t'"${elapsed_seconds}"$'\t'"${title}"$'\n'
+    done
+
+    if [[ -z "${rows}" ]]; then
+        if [[ "${show_all}" == true ]]; then
+            echo "No commits found."
+        else
+            echo "No commits in the last ${days} day$( (( days != 1 )) && echo s )."
+        fi
+        return
+    fi
+
+    {
+        local total_seconds=0
+        local count=0
+        local sorted
+
+        if [[ "${by_id}" == true ]]; then
+            # Group by id (numeric asc), within group date desc.
+            sorted="$(printf '%s' "${rows}" | sort -t$'\t' -k2,2n -k1,1r)"
+
+            local last_id="" id_subtotal=0 row_id row_date row_elapsed row_title
+            while IFS=$'\t' read -r row_date row_id row_elapsed row_title; do
+                [[ -z "${row_date}" ]] && continue
+                if [[ "${row_id}" != "${last_id}" ]]; then
+                    if [[ -n "${last_id}" ]]; then
+                        printf "  Subtotal: %sh\n\n" "$(seconds_to_hours "${id_subtotal}")"
+                        id_subtotal=0
+                    fi
+                    printf "#%s  %s\n" "${row_id}" "${row_title}"
+                    last_id="${row_id}"
+                fi
+                printf "  %s  %sh\n" "${row_date}" "$(seconds_to_hours "${row_elapsed}")"
+                id_subtotal=$(( id_subtotal + row_elapsed ))
+                total_seconds=$(( total_seconds + row_elapsed ))
+                count=$(( count + 1 ))
+            done <<< "${sorted}"
+            if [[ -n "${last_id}" ]]; then
+                printf "  Subtotal: %sh\n" "$(seconds_to_hours "${id_subtotal}")"
+            fi
+        else
+            # Group by date (desc), within day id asc.
+            sorted="$(printf '%s' "${rows}" | sort -t$'\t' -k1,1r -k2,2n)"
+
+            local last_date="" row_id row_date row_elapsed row_title
+            while IFS=$'\t' read -r row_date row_id row_elapsed row_title; do
+                [[ -z "${row_date}" ]] && continue
+                if [[ "${row_date}" != "${last_date}" ]]; then
+                    [[ -n "${last_date}" ]] && echo ""
+                    printf "%s\n" "${row_date}"
+                    last_date="${row_date}"
+                fi
+                printf "  #%-7s %-40s %sh\n" \
+                    "${row_id}" \
+                    "$(truncate_title "${row_title}")" \
+                    "$(seconds_to_hours "${row_elapsed}")"
+                total_seconds=$(( total_seconds + row_elapsed ))
+                count=$(( count + 1 ))
+            done <<< "${sorted}"
+        fi
+
+        echo ""
+        echo "Total: $(seconds_to_hours "${total_seconds}")h across ${count} session$( (( count != 1 )) && echo s )."
+    } | twk_pager
+}
+
 cmd_status() {
     config_require
 

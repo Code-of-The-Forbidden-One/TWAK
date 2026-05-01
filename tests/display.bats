@@ -1619,6 +1619,221 @@ EOF
     assert_output_contains "No uncommitted time entries to commit."
 }
 
+@test "cmd_log: rejects unknown arguments" {
+    run cmd_log --bogus
+    assert_status 1
+    assert_output_contains "unknown argument '--bogus'"
+}
+
+@test "cmd_log: rejects non-numeric --days" {
+    run cmd_log --days=abc
+    assert_status 1
+    assert_output_contains "non-negative integer"
+}
+
+@test "cmd_log: prints 'No commits yet' when committed/ doesn't exist" {
+    [[ ! -d "${TWK_DATA_DIR}/committed" ]] || rm -rf "${TWK_DATA_DIR}/committed"
+
+    run cmd_log
+    assert_status 0
+    assert_output_contains "No commits yet."
+}
+
+@test "cmd_log: prints 'No commits found' with --all when committed/ is empty" {
+    mkdir -p "${TWK_DATA_DIR}/committed"
+
+    run cmd_log --all
+    assert_status 0
+    assert_output_contains "No commits found."
+}
+
+@test "cmd_log: prints 'No commits in the last N days' when window has nothing" {
+    mkdir -p "${TWK_DATA_DIR}/committed"
+    # File from 100 days ago — outside the default 7-day window.
+    local old_ts=$(( $(date +%s) - 100 * 86400 ))
+    {
+        echo "start|${old_ts}"
+        echo "end|$((old_ts + 3600))"
+    } > "${TWK_DATA_DIR}/committed/100_${old_ts}.session"
+
+    run cmd_log
+    assert_status 0
+    assert_output_contains "No commits in the last 7 days."
+}
+
+@test "cmd_log: default (last 7 days, by date): groups, sorts, totals correctly" {
+    require_binary jq
+    require_binary bc
+    mkdir -p "${TWK_DATA_DIR}/committed"
+
+    local now=$(( $(date +%s) ))
+    local today=$(( now - 100 ))           # ~now (today)
+    local yesterday=$(( now - 86400 ))     # 1 day ago
+    local twoDaysAgo=$(( now - 2 * 86400 ))
+
+    # Three commits: two today (different IDs), one yesterday, one 2 days ago.
+    {
+        echo "start|$((today - 3600))"
+        echo "end|${today}"                  # 60m
+    } > "${TWK_DATA_DIR}/committed/100_${today}.session"
+    printf '%s' '{"title":"Login bug","type":"Task"}' > "${TWK_DATA_DIR}/committed/100_${today}.meta"
+
+    {
+        echo "start|$((today - 1800))"
+        echo "end|${today}"                  # 30m
+    } > "${TWK_DATA_DIR}/committed/200_${today}.session"
+    printf '%s' '{"title":"Auth refactor","type":"Task"}' > "${TWK_DATA_DIR}/committed/200_${today}.meta"
+
+    {
+        echo "start|$((yesterday - 3600))"
+        echo "end|${yesterday}"              # 60m
+    } > "${TWK_DATA_DIR}/committed/100_${yesterday}.session"
+    printf '%s' '{"title":"Login bug","type":"Task"}' > "${TWK_DATA_DIR}/committed/100_${yesterday}.meta"
+
+    {
+        echo "start|$((twoDaysAgo - 1800))"
+        echo "end|${twoDaysAgo}"             # 30m
+    } > "${TWK_DATA_DIR}/committed/300_${twoDaysAgo}.session"
+
+    run cmd_log
+    assert_status 0
+    assert_output_contains "Login bug"
+    assert_output_contains "Auth refactor"
+    assert_output_contains "(no title cached)"     # 300 has no .meta
+    assert_output_contains "Total"
+    assert_output_contains "across 4 sessions"
+
+    # Newest day appears before older days.
+    local p_today p_yesterday p_two
+    p_today="$(grep -n "$(date -d "@${today}" +%Y-%m-%d)" <<< "${output}" | head -1 | cut -d: -f1)"
+    p_yesterday="$(grep -n "$(date -d "@${yesterday}" +%Y-%m-%d)" <<< "${output}" | head -1 | cut -d: -f1)"
+    p_two="$(grep -n "$(date -d "@${twoDaysAgo}" +%Y-%m-%d)" <<< "${output}" | head -1 | cut -d: -f1)"
+    [[ "${p_today}" -lt "${p_yesterday}" ]] || { echo "today not before yesterday"; return 1; }
+    [[ "${p_yesterday}" -lt "${p_two}" ]] || { echo "yesterday not before two days ago"; return 1; }
+}
+
+@test "cmd_log --days=N: filters history by window" {
+    require_binary jq
+    require_binary bc
+    mkdir -p "${TWK_DATA_DIR}/committed"
+
+    local now=$(( $(date +%s) ))
+    local recent=$(( now - 2 * 86400 ))     # 2 days ago
+    local old=$(( now - 20 * 86400 ))       # 20 days ago
+
+    {
+        echo "start|$((recent - 1800))"
+        echo "end|${recent}"
+    } > "${TWK_DATA_DIR}/committed/100_${recent}.session"
+    {
+        echo "start|$((old - 1800))"
+        echo "end|${old}"
+    } > "${TWK_DATA_DIR}/committed/200_${old}.session"
+
+    # Default 7 days: only the recent one.
+    run cmd_log
+    assert_status 0
+    assert_output_contains "#100"
+    [[ "${output}" != *"#200"* ]] || { echo "old item leaked into 7-day window"; return 1; }
+
+    # --days=30: both included.
+    run cmd_log --days=30
+    assert_status 0
+    assert_output_contains "#100"
+    assert_output_contains "#200"
+
+    # --all: both included.
+    run cmd_log --all
+    assert_status 0
+    assert_output_contains "#100"
+    assert_output_contains "#200"
+}
+
+@test "cmd_log --by-id: groups by work item, prints subtotals" {
+    require_binary jq
+    require_binary bc
+    mkdir -p "${TWK_DATA_DIR}/committed"
+
+    local now=$(( $(date +%s) ))
+    local d1=$(( now - 3600 ))
+    local d2=$(( now - 86400 ))
+
+    {
+        echo "start|$((d1 - 3600))"
+        echo "end|${d1}"
+    } > "${TWK_DATA_DIR}/committed/100_${d1}.session"   # 60m on item 100, today
+    printf '%s' '{"title":"Login bug","type":"Task"}' > "${TWK_DATA_DIR}/committed/100_${d1}.meta"
+
+    {
+        echo "start|$((d2 - 1800))"
+        echo "end|${d2}"
+    } > "${TWK_DATA_DIR}/committed/100_${d2}.session"   # 30m on item 100, yesterday
+    printf '%s' '{"title":"Login bug","type":"Task"}' > "${TWK_DATA_DIR}/committed/100_${d2}.meta"
+
+    {
+        echo "start|$((d1 - 1800))"
+        echo "end|${d1}"
+    } > "${TWK_DATA_DIR}/committed/200_${d1}.session"   # 30m on item 200
+    printf '%s' '{"title":"Auth refactor","type":"Task"}' > "${TWK_DATA_DIR}/committed/200_${d1}.meta"
+
+    run cmd_log --by-id
+    assert_status 0
+    # Per-item headers and subtotals appear.
+    assert_output_contains "#100  Login bug"
+    assert_output_contains "#200  Auth refactor"
+    assert_output_contains "Subtotal:"
+    assert_output_contains "Total:"
+    assert_output_contains "across 3 sessions"
+
+    # Within an item, dates should be in descending order. For #100,
+    # newer (d1) line should appear before older (d2).
+    local p_d1 p_d2
+    p_d1="$(grep -n "$(date -d "@${d1}" +%Y-%m-%d)" <<< "${output}" | head -1 | cut -d: -f1)"
+    p_d2="$(grep -n "$(date -d "@${d2}" +%Y-%m-%d)" <<< "${output}" | head -1 | cut -d: -f1)"
+    [[ "${p_d1}" -lt "${p_d2}" ]] || { echo "newer date should appear before older within item: ${p_d1} vs ${p_d2}"; return 1; }
+}
+
+@test "cmd_log: skips malformed filenames in committed/" {
+    require_binary jq
+    require_binary bc
+    mkdir -p "${TWK_DATA_DIR}/committed"
+
+    local now=$(( $(date +%s) - 100 ))
+
+    # One valid session.
+    {
+        echo "start|$((now - 1800))"
+        echo "end|${now}"
+    } > "${TWK_DATA_DIR}/committed/100_${now}.session"
+
+    # Malformed names that must be skipped silently.
+    : > "${TWK_DATA_DIR}/committed/junk.session"
+    : > "${TWK_DATA_DIR}/committed/no-underscore.session"
+    : > "${TWK_DATA_DIR}/committed/100_notanumber.session"
+
+    run cmd_log --all
+    assert_status 0
+    assert_output_contains "#100"
+    assert_output_contains "across 1 session"
+}
+
+@test "cmd_log --by-id: trailing 'session' uses singular for one entry" {
+    require_binary jq
+    require_binary bc
+    mkdir -p "${TWK_DATA_DIR}/committed"
+
+    local now=$(( $(date +%s) - 100 ))
+    {
+        echo "start|$((now - 1800))"
+        echo "end|${now}"
+    } > "${TWK_DATA_DIR}/committed/100_${now}.session"
+
+    run cmd_log --by-id
+    assert_status 0
+    assert_output_contains "across 1 session."
+    [[ "${output}" != *"sessions."* ]] || { echo "should be singular: ${output}"; return 1; }
+}
+
 @test "cmd_status: rejects unknown arguments with usage hint" {
     twk_write_fake_config
     config_global_file() { printf '%s\n' "${TWK_CONFIG_DIR}/config"; }

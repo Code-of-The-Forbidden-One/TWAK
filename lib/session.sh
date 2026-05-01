@@ -99,10 +99,9 @@ session_append() {
     echo "${event_type}|${timestamp}" >> "$(session_file_path "${work_item_id}")"
 }
 
-session_calculate_elapsed_seconds() {
-    local work_item_id="$1"
-    local session_file
-    session_file="$(session_file_path "${work_item_id}")" || return 1
+session_elapsed_from_path() {
+    # Sums elapsed time from any session file path (active OR committed).
+    local session_file="$1"
 
     if [[ ! -f "${session_file}" ]]; then
         echo "0"
@@ -140,6 +139,13 @@ session_calculate_elapsed_seconds() {
     fi
 
     echo "${total_seconds}"
+}
+
+session_calculate_elapsed_seconds() {
+    local work_item_id="$1"
+    local session_file
+    session_file="$(session_file_path "${work_item_id}")" || return 1
+    session_elapsed_from_path "${session_file}"
 }
 
 session_list_uncommitted() {

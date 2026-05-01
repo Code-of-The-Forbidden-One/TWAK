@@ -364,6 +364,27 @@ scope in addition to the standard
 .BR "Work Items (Read & Write)" .
 Group entries are filtered out — only individual users appear.
 .TP
+.B log \fR[\fB\-\-days=\fR\fIN\fR | \fB\-\-all\fR] [\fB\-\-by-id\fR]
+Browse the history of committed time entries. Reads
+.I ~/.local/share/twk/sessions/committed/
+and renders a chronological view (default: last 7 days, grouped
+by date with newest first). Each session's commit timestamp
+comes from its archived filename; titles come from the
+.I .meta
+sidecar (when present, otherwise
+.I "(no title cached)" ).
+.IP
+.BI \-\-days= N
+overrides the default 7-day window.
+.B \-\-all
+shows every committed session ever.
+.B \-\-by-id
+groups by work item ID with per-ID subtotals instead of grouping
+by date. The grand total appears at the bottom in either layout.
+.IP
+Local-only: no network, no AzDO contact. Output auto-pages via
+.BR "less -FRX" .
+.TP
 .B pull
 For every uncommitted session, re-fetch the work item's title and
 type from Azure DevOps and rewrite the

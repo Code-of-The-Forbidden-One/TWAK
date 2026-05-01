@@ -83,6 +83,7 @@ _run_dispatch() {
         cmd_list()    { printf "list\t%s\n"    "$*" >> "$CALL_LOG"; }
         cmd_show()    { printf "show\t%s\n"    "$*" >> "$CALL_LOG"; }
         cmd_users()   { printf "users\t%s\n"   "$*" >> "$CALL_LOG"; }
+        cmd_log()     { printf "log\t%s\n"     "$*" >> "$CALL_LOG"; }
         cmd_pull()    { printf "pull\t%s\n"    "$*" >> "$CALL_LOG"; }
         cmd_status()  { printf "status\t%s\n"  "$*" >> "$CALL_LOG"; }
         cmd_commit()  { printf "commit\t%s\n"  "$*" >> "$CALL_LOG"; }
@@ -171,6 +172,16 @@ _first_call() {
 @test "dispatch: 'twk users' → cmd_users" {
     run _run_dispatch users
     [[ "$(_first_call)" == $'users\t' ]]
+}
+
+@test "dispatch: 'twk log' → cmd_log" {
+    run _run_dispatch log
+    [[ "$(_first_call)" == $'log\t' ]]
+}
+
+@test "dispatch: 'twk log --by-id --days=30' → cmd_log --by-id --days=30" {
+    run _run_dispatch log --by-id --days=30
+    [[ "$(_first_call)" == $'log\t--by-id --days=30' ]]
 }
 
 @test "dispatch: 'twk status' → cmd_status" {

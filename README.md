@@ -91,7 +91,7 @@ twk has two distinct ways of writing to Azure DevOps. Knowing which is which avo
 | **Commit cycle (deferred)** | `start`, `pause`, `end`, `undo`, `cancel`, `status`, `commit` | `start`/`pause`/`end`/`undo`/`cancel` only touch local session files. AzDO is contacted **only** on `twk commit`, which pushes the accumulated hours in one go. |
 | **Immediate AzDO actions** | `done`, `assign`, `comment`, `reset` | PATCH/POST to AzDO **as soon as you invoke them**. No staging, no `commit`, no twk-side undo — fix via the AzDO web UI or by re-running with different arguments. `reset` is destructive (wipes the time field) so it confirms by default. |
 | **Immediate (alongside session change)** | `--state X` flag on any time-tracking command | Fires an immediate state PATCH on top of the local session change. The session part still goes through the commit cycle; the state change does not. |
-| **Read-only / local** | `list`, `show`, `users`, `pull`, `init` (writes local config), `version`, `help` | No writes to AzDO state. `list`/`show`/`users` read from AzDO. `pull` reads from AzDO and writes only to your local meta cache. `status` is local-only by default; with `--with-existing` it reads from AzDO. |
+| **Read-only / local** | `list`, `show`, `users`, `log`, `pull`, `init` (writes local config), `version`, `help` | No writes to AzDO state. `list`/`show`/`users` read from AzDO. `pull` reads from AzDO and writes only to your local meta cache. `log` reads only the local committed/ archive — no network. `status` is local-only by default; with `--with-existing` it reads from AzDO. |
 
 The commit cycle is the safe, iterable flow — track time offline, review with `status`, fix with `undo`/`cancel`, push when ready. The immediate flow is for things that don't have a meaningful "draft" stage (a state change, an assignment).
 
@@ -660,6 +660,66 @@ Notes:
 
 ---
 
+### `twk log [--days=N | --all] [--by-id]`
+
+Browses the history of committed time entries. Reads `~/.local/share/twk/sessions/committed/`, joins each archived session with its `.meta` sidecar for the title, and renders a chronological view of what you've pushed to AzDO.
+
+**Local-only.** Hits no network, ignores PAT and config. Output auto-pages through `less -FRX` when long.
+
+**Defaults to the last 7 days, grouped by date.** Newest day first; within each day, items sort by ID ascending.
+
+```
+$ twk log
+2026-05-02
+  #48210   Implement login button                   3.38h
+  #48215   Refactor auth middleware                 0.75h
+
+2026-05-01
+  #48210   Implement login button                   2.20h
+
+2026-04-30
+  #48205   Audit login bug                          1.10h
+
+Total: 7.43h across 4 sessions.
+```
+
+**`--days=N`** widens or narrows the window. `--all` removes the limit entirely.
+
+```
+$ twk log --days=30        # last 30 days
+$ twk log --days=1         # just today (ish — 24h window from now)
+$ twk log --all            # everything ever
+```
+
+**`--by-id`** groups by work item ID with per-item subtotals — useful for "how much have I spent on #48210 across the project?":
+
+```
+$ twk log --by-id --days=14
+#48210  Implement login button
+  2026-05-02  3.38h
+  2026-05-01  2.20h
+  Subtotal: 5.58h
+
+#48215  Refactor auth middleware
+  2026-05-02  0.75h
+  Subtotal: 0.75h
+
+#48205  Audit login bug
+  2026-04-30  1.10h
+  Subtotal: 1.10h
+
+Total: 7.43h across 4 sessions.
+```
+
+Notes:
+
+- **Time sums match what was committed**, including any `twk adjust` events on the session at the time it was committed (the archived file is a snapshot).
+- **Missing titles** render as `(no title cached)` — same fallback as `twk status`.
+- The commit timestamp is read from the filename (`<id>_<unix_ts>.session`), not from a header inside the file.
+- Empty windows print a clear message: `No commits in the last 7 days.` (or `No commits found.` for `--all`).
+
+---
+
 ### `twk pull`
 
 Refreshes the cached title/type metadata for every uncommitted session by re-fetching from Azure DevOps. Useful when:
@@ -812,6 +872,7 @@ Usage:
     twk list             List current sprint items with metadata
     twk show             Show one work item's full metadata + description
     twk users            List sprint or org-wide users
+    twk log              Browse history of committed time entries
     twk pull             Refresh cached title/type for all sessions
 
   Misc
@@ -830,9 +891,12 @@ Options:
                          prefix with '-' for descending: --sort=-done
     --me                 (assign only) Assign yourself based on the PAT's identity
     --all                (assign, users) Use org-wide user list (Graph API; needs PAT scope)
+                         (log) Show all committed history rather than just the last N days
     --discussion         (show only) Append the AzDO Discussion thread (comments)
     --dry-run            (commit only) Preview what would be pushed without writing
     -y, --yes            (reset only) Skip the destructive-action confirmation prompt
+    --days=<n>           (log only) Limit history to the last N days (default 7)
+    --by-id              (log only) Group history by work item ID instead of date
 
 Note: --state X on any time-tracking command also fires an immediate PATCH to AzDO.
 

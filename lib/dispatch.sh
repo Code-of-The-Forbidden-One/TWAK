@@ -40,6 +40,7 @@ Usage:
     twk list             List current sprint items with metadata
     twk show             Show one work item's full metadata + description
     twk users            List sprint or org-wide users
+    twk log              Browse history of committed time entries
     twk pull             Refresh cached title/type for all sessions
 
   Misc
@@ -58,9 +59,12 @@ Options:
                          assigned). Prefix with '-' for descending: --sort=-done.
     --me                 (assign only) Assign yourself based on the PAT's identity
     --all                (assign, users) Use org-wide user list (Graph API; needs PAT scope)
+                         (log) Show all committed history rather than just the last N days
     --discussion         (show only) Append the AzDO Discussion thread (comments)
     --dry-run            (commit only) Preview what would be pushed without writing
     -y, --yes            (reset only) Skip the destructive-action confirmation prompt
+    --days=<n>           (log only) Limit history to the last N days (default 7)
+    --by-id              (log only) Group history by work item ID instead of date
 
 Note: --state X on any time-tracking command also fires an immediate PATCH to AzDO.
 
@@ -97,6 +101,7 @@ main() {
         list)    cmd_list "$@" ;;
         show)    cmd_show "$@" ;;
         users)   cmd_users "$@" ;;
+        log)     cmd_log "$@" ;;
         pull)    cmd_pull "$@" ;;
         status)  cmd_status "$@" ;;
         commit)  cmd_commit "$@" ;;

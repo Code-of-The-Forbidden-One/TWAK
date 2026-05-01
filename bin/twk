@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly TWK_VERSION="0.1.0"
+readonly TWK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly TWK_LIB="${TWK_ROOT}/lib"
+readonly TWK_CONFIG_DIR="${HOME}/.config/twk"
+readonly TWK_DATA_DIR="${HOME}/.local/share/twk/sessions"
+
+source "${TWK_LIB}/config.sh"
+source "${TWK_LIB}/azdo.sh"
+source "${TWK_LIB}/resolve.sh"
+source "${TWK_LIB}/session.sh"
+source "${TWK_LIB}/display.sh"
+
+check_dependencies() {
+    local missing=()
+    local dep
+    for dep in curl jq bc; do
+        if ! command -v "${dep}" &> /dev/null; then
+            missing+=("${dep}")
+        fi
+    done
+
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        echo "Error: missing required dependencies: ${missing[*]}" >&2
+        echo "Install them and try again." >&2
+        exit 1
+    fi
+}
+
+check_dependencies
+
+print_usage() {
+    cat <<'USAGE'
+twk - Time Worked and Committed
+
+Usage:
+    twk init                    Configure Azure DevOps connection
+    twk start [task]            Start timing a work item
+    twk pause [task]            Pause timing a work item
+    twk end [task]              Stop timing a work item
+    twk status                  View uncommitted time entries
+    twk commit                  Push time entries to Azure DevOps
+    twk version                 Show version
+
+Arguments:
+    [task]  Work item ID, partial title, or omit for interactive picker
+USAGE
+}
+
+main() {
+    local command="${1:-}"
+    shift || true
+
+    case "${command}" in
+        init)    cmd_init "$@" ;;
+        start)   cmd_start "$@" ;;
+        pause)   cmd_pause "$@" ;;
+        end)     cmd_end "$@" ;;
+        status)  cmd_status "$@" ;;
+        commit)  cmd_commit "$@" ;;
+        version) echo "twk ${TWK_VERSION}" ;;
+        help|-h|--help) print_usage ;;
+        "")      print_usage; exit 1 ;;
+        *)       echo "Error: unknown command '${command}'" >&2; print_usage >&2; exit 1 ;;
+    esac
+}
+
+main "$@"

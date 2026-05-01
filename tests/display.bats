@@ -193,6 +193,116 @@ setup() {
     assert_output_contains "02:00:00"
 }
 
+@test "cmd_status: rejects unknown arguments with usage hint" {
+    twk_write_fake_config
+    config_global_file() { printf '%s\n' "${TWK_CONFIG_DIR}/config"; }
+    config_find_local() { return 1; }
+
+    run cmd_status --bogus
+    assert_status 1
+    assert_output_contains "unknown argument '--bogus'"
+    assert_output_contains "Usage: twk status"
+}
+
+@test "cmd_status --with-existing: renders extra columns and post-commit projection" {
+    require_binary jq
+    require_binary bc
+
+    twk_write_fake_config
+    config_global_file() { printf '%s\n' "${TWK_CONFIG_DIR}/config"; }
+    config_find_local() { return 1; }
+
+    # One session, one hour tracked.
+    local now hour_ago
+    now="$(date +%s)"
+    hour_ago=$(( now - 3600 ))
+    mkdir -p "${TWK_DATA_DIR}"
+    echo "start|${hour_ago}" > "${TWK_DATA_DIR}/400.session"
+    echo "end|${now}"        >> "${TWK_DATA_DIR}/400.session"
+    printf '%s\n' '{"title":"with existing test","type":"Task"}' \
+        > "${TWK_DATA_DIR}/400.meta"
+
+    # Stub the batch fetch — return existing 4.20h on the configured task field.
+    local task_field="${TWK_TIME_FIELD_TASK}"
+    azdo_fetch_existing_times() {
+        printf '%s' "{\"value\":[{\"id\":400,\"fields\":{\"System.WorkItemType\":\"Task\",\"${task_field}\":4.20}}]}"
+    }
+
+    run cmd_status --with-existing
+    assert_status 0
+    assert_output_contains "+ AzDO"
+    assert_output_contains "= Total"
+    assert_output_contains "#400"
+    assert_output_contains "1.00h"      # tracked
+    assert_output_contains "4.20h"      # existing
+    assert_output_contains "5.20h"      # total = 4.20 + 1.00
+}
+
+@test "cmd_status --with-existing: shows '?' when batch fetch fails" {
+    require_binary jq
+    require_binary bc
+
+    twk_write_fake_config
+    config_global_file() { printf '%s\n' "${TWK_CONFIG_DIR}/config"; }
+    config_find_local() { return 1; }
+
+    local now hour_ago
+    now="$(date +%s)"
+    hour_ago=$(( now - 3600 ))
+    mkdir -p "${TWK_DATA_DIR}"
+    echo "start|${hour_ago}" > "${TWK_DATA_DIR}/500.session"
+    echo "end|${now}"        >> "${TWK_DATA_DIR}/500.session"
+
+    # Simulate AzDO unreachable.
+    azdo_fetch_existing_times() { return 1; }
+
+    run cmd_status --with-existing
+    assert_status 0
+    assert_output_contains "+ AzDO"
+    assert_output_contains "?"
+    # The command itself does not fail.
+}
+
+@test "build_existing_times_map: maps id -> task or feature time field by type" {
+    require_binary jq
+
+    twk_write_fake_config
+    config_global_file() { printf '%s\n' "${TWK_CONFIG_DIR}/config"; }
+    config_find_local() { return 1; }
+
+    local task_field="${TWK_TIME_FIELD_TASK}"
+    local feature_field="${TWK_TIME_FIELD_FEATURE}"
+
+    azdo_fetch_existing_times() {
+        printf '%s' "{
+            \"value\": [
+                {\"id\": 600, \"fields\": {\"System.WorkItemType\": \"Task\",    \"${task_field}\": 1.5}},
+                {\"id\": 601, \"fields\": {\"System.WorkItemType\": \"Feature\", \"${feature_field}\": 2.5}},
+                {\"id\": 602, \"fields\": {\"System.WorkItemType\": \"Bug\"}}
+            ]
+        }"
+    }
+
+    run build_existing_times_map "[600,601,602]"
+    assert_status 0
+    # Bug falls through to task field (which is missing → 0).
+    assert_output_contains "600	1.5"
+    assert_output_contains "601	2.5"
+    assert_output_contains "602	0"
+}
+
+@test "lookup_existing_time: returns mapped value or '?' when missing" {
+    local map=$'700\t3.14\n701\t1.0'
+
+    run lookup_existing_time 700 "${map}"
+    assert_status 0
+    [[ "${output}" == "3.14" ]] || { echo "got: ${output}"; return 1; }
+
+    run lookup_existing_time 999 "${map}"
+    assert_status 0
+    [[ "${output}" == "?" ]] || { echo "got: ${output}"; return 1; }
+}
+
 @test "cmd_status: 'no title cached' placeholder appears once per untitled session" {
     require_binary jq
     require_binary bc

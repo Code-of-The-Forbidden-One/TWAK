@@ -112,7 +112,7 @@ When
 is omitted, the interactive picker only lists existing sessions; a
 single match is selected automatically.
 .TP
-.B status
+.B status \fR[\fB\-\-with-existing\fR]
 Print the active config path and scope, followed by every uncommitted
 time entry with its cached title (truncated to 40 chars), current
 state, elapsed time, and decimal hours. Titles are cached on first
@@ -121,7 +121,21 @@ to a sidecar
 .I .meta
 file, so
 .B status
-itself never hits the network.
+itself never hits the network by default.
+.IP
+With
+.B \-\-with-existing
+the command issues one batched call to the AzDO work-items endpoint
+to read the current time field on every uncommitted work item, then
+appends two columns:
+.B "+ AzDO"
+(the current value in the work item) and
+.B "= Total"
+(the value that would land on the next
+.BR "twk commit" ).
+Cells display
+.I ?
+if the lookup fails for any reason; the command itself does not fail.
 .TP
 .B commit
 Push accumulated time to the configured time field on each work item in

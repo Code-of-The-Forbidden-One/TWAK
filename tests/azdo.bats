@@ -169,6 +169,56 @@ setup() {
 }
 
 # -----------------------------------------------------------------------------
+# azdo_fetch_existing_times — POSTs to workitemsbatch with the configured time
+# fields plus System.Id/Type, deduplicated when task field == feature field.
+# -----------------------------------------------------------------------------
+
+@test "azdo_fetch_existing_times: POSTs to workitemsbatch with configured fields" {
+    export TWK_ORGANIZATION="acme" TWK_PROJECT="Platform"
+    export TWK_TIME_FIELD_TASK="Custom.TaskTime"
+    export TWK_TIME_FIELD_FEATURE="Custom.FeatureTime"
+
+    local captured_body=""
+    local captured_url=""
+    local captured_method=""
+    azdo_api_request() {
+        captured_method="$1"
+        captured_url="$2"
+        captured_body="$3"
+        printf '%s' '{"value":[]}'
+    }
+
+    azdo_fetch_existing_times "[100,200]"
+    [[ "${captured_method}" == "POST" ]] || { echo "method: ${captured_method}"; return 1; }
+    [[ "${captured_url}" == *"workitemsbatch"* ]] || { echo "url: ${captured_url}"; return 1; }
+    # Body should include both configured fields plus the standard ones.
+    [[ "${captured_body}" == *"Custom.TaskTime"* ]] || { echo "body: ${captured_body}"; return 1; }
+    [[ "${captured_body}" == *"Custom.FeatureTime"* ]] || { echo "body: ${captured_body}"; return 1; }
+    [[ "${captured_body}" == *"System.WorkItemType"* ]] || { echo "body: ${captured_body}"; return 1; }
+    # ids should be in the body.
+    [[ "${captured_body}" == *"100"* ]] || { echo "body: ${captured_body}"; return 1; }
+    [[ "${captured_body}" == *"200"* ]] || { echo "body: ${captured_body}"; return 1; }
+}
+
+@test "azdo_fetch_existing_times: dedupes fields when task and feature share a name" {
+    export TWK_ORGANIZATION="acme" TWK_PROJECT="Platform"
+    export TWK_TIME_FIELD_TASK="Microsoft.VSTS.Scheduling.CompletedWork"
+    export TWK_TIME_FIELD_FEATURE="Microsoft.VSTS.Scheduling.CompletedWork"
+
+    local captured_body=""
+    azdo_api_request() {
+        captured_body="$3"
+        printf '%s' '{"value":[]}'
+    }
+
+    azdo_fetch_existing_times "[42]"
+    # CompletedWork should appear exactly once in the fields array (jq unique).
+    local count
+    count="$(grep -o "CompletedWork" <<< "${captured_body}" | wc -l)"
+    [[ "${count}" -eq 1 ]] || { echo "appeared ${count} times: ${captured_body}"; return 1; }
+}
+
+# -----------------------------------------------------------------------------
 # azdo_update_state / azdo_update_time_spent — both validate id and build
 # JSON-patch bodies.  We override azdo_api_request to capture method, url,
 # body and verify the right shape was sent.

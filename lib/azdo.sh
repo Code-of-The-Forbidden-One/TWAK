@@ -99,6 +99,26 @@ EOF
     azdo_api_request "POST" "${url}" "${body}"
 }
 
+azdo_fetch_existing_times() {
+    local ids_json="$1"
+
+    local url
+    url="$(azdo_base_url)/_apis/wit/workitemsbatch?api-version=7.1"
+
+    local body
+    body="$(jq -nc \
+        --arg t "${TWK_TIME_FIELD_TASK}" \
+        --arg f "${TWK_TIME_FIELD_FEATURE}" \
+        --argjson ids "${ids_json}" '
+        {
+            ids: $ids,
+            fields: (["System.Id", "System.WorkItemType", $t, $f] | unique)
+        }
+    ')"
+
+    azdo_api_request "POST" "${url}" "${body}"
+}
+
 azdo_fetch_work_item_meta() {
     local work_item_id="$1"
 

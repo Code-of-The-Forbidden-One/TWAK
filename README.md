@@ -295,11 +295,11 @@ Cancelled #48215 (00:45:30 discarded)
 
 ---
 
-### `twk status`
+### `twk status [--with-existing]`
 
 Shows which config is active (and its scope) followed by all uncommitted time entries with their work item title, current state, and accumulated duration.
 
-Titles are cached to a sidecar `.meta` file the first time you `twk start <id>`, so `status` itself stays offline. Titles are truncated to 40 characters with `...` if longer. Sessions started before this caching landed (or while you were offline) will show `(no title cached)`; resume them once with `twk start <id>` while online to backfill the title.
+Titles are cached to a sidecar `.meta` file the first time you `twk start <id>`, so `status` itself stays offline by default. Titles are truncated to 40 characters with `...` if longer. Sessions started before this caching landed (or while you were offline) will show `(no title cached)`; resume them once with `twk start <id>` while online to backfill the title.
 
 ```
 $ twk status
@@ -314,6 +314,23 @@ Uncommitted time entries:
   #48220   Fix flaky integration test on CI         paused     01:10:00     1.16h
 ─────────────────────────────────────────────────────────────────────────────────
   Total                                             05:18:15     5.30h
+```
+
+Pass `--with-existing` to fold in the current time-field value from AzDO on each work item — useful for previewing what the next `twk commit` will leave on the board. The command issues a single batched call to the AzDO work-items endpoint and adds two columns: `+ AzDO` (current value) and `= Total` (post-commit projection). Cells display `?` if the lookup fails (network down, work item deleted, etc.); the command itself does not fail.
+
+```
+$ twk status --with-existing
+Config: /home/user/Projects/Platform/.twk/config (local scope)
+
+Uncommitted time entries:
+─────────────────────────────────────────────────────────────────────────────────────────────────────
+  ID       Title                                    State      Time         Hours    + AzDO    = Total
+─────────────────────────────────────────────────────────────────────────────────────────────────────
+  #48210   Implement login button                   ended      03:22:45     3.38h    4.20h     7.58h
+  #48215   Refactor authentication middleware to... running    00:45:30     .75h     1.00h     1.75h
+  #48220   Fix flaky integration test on CI         paused     01:10:00     1.16h    0h        1.16h
+─────────────────────────────────────────────────────────────────────────────────────────────────────
+  Total                                             05:18:15     5.30h    5.20h    10.49h
 ```
 
 ---
@@ -358,23 +375,25 @@ Displays usage information.
 ```
 $ twk help
 Usage:
-    twk init [--global]         Configure Azure DevOps connection
-    twk start [task]            Start timing a work item
-    twk pause [task]            Pause timing a work item
-    twk end [task]              Stop timing a work item
-    twk done [task]             Mark a work item as done
-    twk undo [task]             Undo the last event on a session
-    twk cancel [task]           Discard an uncommitted session
-    twk status                  View uncommitted time entries
-    twk commit                  Push time entries to Azure DevOps
-    twk version                 Show version
+    twk init             Configure Azure DevOps connection
+    twk start            Start timing a work item
+    twk pause            Pause timing a work item
+    twk end              Stop timing a work item
+    twk done             Mark a work item as done
+    twk undo             Undo the last event on a session
+    twk cancel           Discard an uncommitted session
+    twk status           View uncommitted time entries
+    twk commit           Push time entries to Azure DevOps
+    twk version          Show version
 
 Arguments:
-    [task]    Work item ID, partial title, or omit for interactive picker
+    [task]               Work item ID, partial title, or omit for interactive picker
+                         (start, pause, end, done, undo, cancel)
 
 Options:
-    --global  (init only) Write to the global config rather than a project-local one
-    --state   (start, pause, end, done, undo, cancel) Set the AzDO work item state
+    --global             (init only) Write to the global config rather than project-local
+    --state <state>      (start, pause, end, done, undo, cancel) Set AzDO work item state
+    --with-existing      (status only) Show post-commit projection (existing AzDO + tracked)
 ```
 
 Pass `--help` (or `-h`) to any subcommand for detailed help on that command (e.g. `twk start --help`).

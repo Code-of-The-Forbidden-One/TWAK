@@ -24,8 +24,49 @@ truncate_title() {
     fi
 }
 
+build_existing_times_map() {
+    local ids_json="$1"
+
+    local response
+    response="$(azdo_fetch_existing_times "${ids_json}" 2>/dev/null)" || return 1
+
+    echo "${response}" | jq -r \
+        --arg t "${TWK_TIME_FIELD_TASK}" \
+        --arg f "${TWK_TIME_FIELD_FEATURE}" '
+        .value[]
+        | . as $w
+        | (if $w.fields["System.WorkItemType"] == "Feature" then $f else $t end) as $field
+        | "\($w.id)\t\($w.fields[$field] // 0)"
+    '
+}
+
+lookup_existing_time() {
+    local work_item_id="$1"
+    local map="$2"
+    local hit
+    hit="$(printf '%s\n' "${map}" | awk -F'\t' -v id="${work_item_id}" '$1 == id { print $2; exit }')"
+    if [[ -z "${hit}" ]]; then
+        echo "?"
+    else
+        echo "${hit}"
+    fi
+}
+
 cmd_status() {
     config_require
+
+    local with_existing=false
+    local arg
+    for arg in "$@"; do
+        case "${arg}" in
+            --with-existing) with_existing=true ;;
+            *)
+                echo "Error: unknown argument '${arg}' for status." >&2
+                echo "Usage: twk status [--with-existing]" >&2
+                return 1
+                ;;
+        esac
+    done
 
     local session_files
     session_files="$(session_list_uncommitted)"
@@ -37,17 +78,40 @@ cmd_status() {
         return
     fi
 
+    local existing_map=""
+    if [[ "${with_existing}" == true ]]; then
+        local ids=()
+        local f
+        while read -r f; do
+            ids+=("$(session_work_item_id_from_path "${f}")")
+        done <<< "${session_files}"
+        local ids_json
+        ids_json="$(printf '%s\n' "${ids[@]}" | jq -Rcn '[inputs | tonumber]')"
+        existing_map="$(build_existing_times_map "${ids_json}" || true)"
+    fi
+
+    local rule_width=81
+    [[ "${with_existing}" == true ]] && rule_width=101
     local rule
-    rule="$(printf '─%.0s' $(seq 1 81))"
+    rule="$(printf '─%.0s' $(seq 1 "${rule_width}"))"
 
     echo ""
     echo "Uncommitted time entries:"
     echo "${rule}"
-    printf "  %-8s %-${STATUS_TITLE_WIDTH}s %-10s %-12s %s\n" "ID" "Title" "State" "Time" "Hours"
+    if [[ "${with_existing}" == true ]]; then
+        printf "  %-8s %-${STATUS_TITLE_WIDTH}s %-10s %-12s %-8s %-8s %s\n" \
+            "ID" "Title" "State" "Time" "Hours" "+ AzDO" "= Total"
+    else
+        printf "  %-8s %-${STATUS_TITLE_WIDTH}s %-10s %-12s %s\n" \
+            "ID" "Title" "State" "Time" "Hours"
+    fi
     echo "${rule}"
 
     local total_seconds=0
+    local total_existing=0
+    local total_combined=0
     local work_item_id state elapsed_seconds hours_decimal title
+    local existing existing_display total_display
 
     while read -r session_file; do
         work_item_id="$(session_work_item_id_from_path "${session_file}")"
@@ -62,19 +126,49 @@ cmd_status() {
             title="(no title cached)"
         fi
 
-        printf "  #%-7s %-${STATUS_TITLE_WIDTH}s %-10s %-12s %sh\n" \
-            "${work_item_id}" \
-            "$(truncate_title "${title}")" \
-            "${state}" \
-            "$(format_duration "${elapsed_seconds}")" \
-            "${hours_decimal}"
+        if [[ "${with_existing}" == true ]]; then
+            existing="$(lookup_existing_time "${work_item_id}" "${existing_map}")"
+            if [[ "${existing}" == "?" ]]; then
+                existing_display="?"
+                total_display="?"
+            else
+                existing_display="${existing}h"
+                total_display="$(echo "scale=2; ${existing} + ${hours_decimal}" | bc)h"
+                total_existing="$(echo "scale=2; ${total_existing} + ${existing}" | bc)"
+                total_combined="$(echo "scale=2; ${total_combined} + ${existing} + ${hours_decimal}" | bc)"
+            fi
+            printf "  #%-7s %-${STATUS_TITLE_WIDTH}s %-10s %-12s %-8s %-8s %s\n" \
+                "${work_item_id}" \
+                "$(truncate_title "${title}")" \
+                "${state}" \
+                "$(format_duration "${elapsed_seconds}")" \
+                "${hours_decimal}h" \
+                "${existing_display}" \
+                "${total_display}"
+        else
+            printf "  #%-7s %-${STATUS_TITLE_WIDTH}s %-10s %-12s %sh\n" \
+                "${work_item_id}" \
+                "$(truncate_title "${title}")" \
+                "${state}" \
+                "$(format_duration "${elapsed_seconds}")" \
+                "${hours_decimal}"
+        fi
     done <<< "${session_files}"
 
     echo "${rule}"
-    printf "  %-8s %-${STATUS_TITLE_WIDTH}s %-10s %-12s %sh\n" \
-        "Total" "" "" \
-        "$(format_duration "${total_seconds}")" \
-        "$(seconds_to_hours "${total_seconds}")"
+    if [[ "${with_existing}" == true ]]; then
+        printf "  %-8s %-${STATUS_TITLE_WIDTH}s %-10s %-12s %-8s %-8s %s\n" \
+            "Total" "" "" \
+            "$(format_duration "${total_seconds}")" \
+            "$(seconds_to_hours "${total_seconds}")h" \
+            "${total_existing}h" \
+            "${total_combined}h"
+    else
+        printf "  %-8s %-${STATUS_TITLE_WIDTH}s %-10s %-12s %sh\n" \
+            "Total" "" "" \
+            "$(format_duration "${total_seconds}")" \
+            "$(seconds_to_hours "${total_seconds}")"
+    fi
 }
 
 cmd_commit() {

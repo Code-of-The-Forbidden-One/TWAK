@@ -183,7 +183,13 @@ HELP
 twk status - View active config and uncommitted time entries
 
 Usage:
-    twk status
+    twk status [--with-existing]
+
+Options:
+    --with-existing   Fetch the current AzDO time field for each
+                      session (one batched API call) and add two
+                      columns: '+ AzDO' (current value in the work
+                      item) and '= Total' (what would land on commit).
 
 Prints the active config path and its scope (local or global),
 followed by every tracked session that hasn't been committed to
@@ -192,9 +198,15 @@ title (truncated to 40 chars), current state (running, paused,
 or ended), elapsed time, and decimal hours.
 
 Titles are cached on first 'twk start <id>' to a sidecar .meta
-file, so 'status' itself never hits the network. Sessions
-without a cached title display '(no title cached)' - resume
-once with 'twk start' while online to backfill.
+file, so 'status' itself never hits the network by default.
+Sessions without a cached title display '(no title cached)' -
+resume once with 'twk start' while online to backfill.
+
+With --with-existing, status hits AzDO once via the work-items
+batch endpoint to read the current time field on every uncommitted
+work item, then renders two extra columns showing the projected
+post-commit value. Cells display '?' if the lookup fails (network
+down, work item deleted, etc.); the command does not fail.
 HELP
             ;;
         commit)

@@ -17,25 +17,27 @@ print_usage() {
     echo ""
     cat <<'USAGE'
 Usage:
-    twk init [--global]         Configure Azure DevOps connection
-    twk start [task]            Start timing a work item
-    twk pause [task]            Pause timing a work item
-    twk end [task]              Stop timing a work item
-    twk done [task]             Mark a work item as done
-    twk undo [task]             Undo the last event on a session
-    twk cancel [task]           Discard an uncommitted session
-    twk status                  View uncommitted time entries
-    twk commit                  Push time entries to Azure DevOps
-    twk version                 Show version
+    twk init             Configure Azure DevOps connection
+    twk start            Start timing a work item
+    twk pause            Pause timing a work item
+    twk end              Stop timing a work item
+    twk done             Mark a work item as done
+    twk undo             Undo the last event on a session
+    twk cancel           Discard an uncommitted session
+    twk status           View uncommitted time entries
+    twk commit           Push time entries to Azure DevOps
+    twk version          Show version
 
 Arguments:
-    [task]    Work item ID, partial title, or omit for interactive picker
+    [task]               Work item ID, partial title, or omit for interactive picker
+                         (start, pause, end, done, undo, cancel)
 
 Options:
-    --global  (init only) Write to the global config rather than a project-local one
-    --state   Set the AzDO work item state. Applies to start, pause, end, undo, and
-              cancel (which all touch sessions). On 'done' (state-only, no session),
-              this overrides the configured done-state.
+    --global             (init only) Write to the global config rather than project-local
+    --state <state>      (start, pause, end, done, undo, cancel) Set AzDO work item state
+    --with-existing      (status only) Show post-commit projection (existing AzDO + tracked)
+
+Pass --help (or -h) to any subcommand for full per-command help.
 USAGE
 }
 

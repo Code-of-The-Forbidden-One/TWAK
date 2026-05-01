@@ -1,0 +1,148 @@
+.TH TWK 1 "May 2026" "twk 0.1.0" "User Commands"
+.SH NAME
+twk \- track time worked against Azure DevOps work items
+.SH SYNOPSIS
+.B twk
+.I command
+.RI [ task ]
+.SH DESCRIPTION
+.B twk
+(Time Worked and Committed) is a CLI tool for tracking time against
+Azure DevOps work items from the terminal. Start, pause, and end
+timing sessions locally, then commit the accumulated hours back to
+your board in one push.
+.PP
+Multiple work items can be tracked in parallel for easy context switching.
+.SH COMMANDS
+.TP
+.B init
+Configure the Azure DevOps connection. Prompts for organisation, project,
+team, and personal access token. Stores credentials at
+.I ~/.config/twk/config
+with restrictive permissions.
+.TP
+.B start \fR[\fItask\fR]
+Start timing a work item. If the item is paused, resumes it instead.
+.TP
+.B pause \fR[\fItask\fR]
+Pause an active timing session. Elapsed time is preserved.
+.TP
+.B end \fR[\fItask\fR]
+End a timing session. The item can be running or paused.
+.TP
+.B status
+Display all uncommitted time entries with elapsed time and decimal hours.
+.TP
+.B commit
+Push accumulated time to the Completed Work field on each work item in
+Azure DevOps. Time is additive. Running sessions are skipped.
+.TP
+.B version
+Print the version number.
+.TP
+.B help
+Print usage information.
+.SH TASK ARGUMENT
+The
+.I task
+argument supports three resolution modes:
+.TP
+.I 12345
+A numeric value is treated as a direct work item ID.
+.TP
+.I "partial title"
+A string is matched case-insensitively against work item titles in the
+current sprint. If multiple items match, you are prompted to choose.
+.TP
+(omitted)
+When no argument is given, an interactive picker is shown. If
+.B fzf
+is installed it is used for fuzzy selection; otherwise a numbered list
+is displayed.
+.SH CONFIGURATION
+Run
+.B twk init
+to create the configuration file at
+.IR ~/.config/twk/config .
+The file stores your Azure DevOps organisation, project, team, and
+personal access token. The config directory is set to mode 700 and
+the config file to mode 600.
+.PP
+Your PAT requires the
+.B "Work Items (Read & Write)"
+scope. Generate one at:
+.PP
+.RS
+https://dev.azure.com/{your-org}/_usersettings/tokens
+.RE
+.SH FILES
+.TP
+.I ~/.config/twk/config
+Azure DevOps connection settings.
+.TP
+.I ~/.local/share/twk/sessions/<id>.session
+Active time tracking session files. Each file contains append-only
+events in the format
+.BR event|timestamp .
+.TP
+.I ~/.local/share/twk/sessions/committed/
+Archived sessions that have been committed to Azure DevOps.
+.SH ENVIRONMENT
+.B twk
+does not read any environment variables. All configuration is stored
+in the config file.
+.SH DEPENDENCIES
+.B curl
+(API requests),
+.B jq
+(JSON parsing),
+.B bc
+(decimal hour calculations). Optional:
+.B fzf
+(interactive picker).
+.SH EXAMPLES
+Track a single work item from start to finish:
+.PP
+.RS
+.nf
+twk start 12345
+twk pause 12345
+twk start 12345
+twk end 12345
+twk commit
+.fi
+.RE
+.PP
+Track multiple items in parallel:
+.PP
+.RS
+.nf
+twk start 12345
+twk start 67890
+twk pause 12345
+twk end 67890
+twk status
+twk commit
+.fi
+.RE
+.PP
+Use title matching:
+.PP
+.RS
+.nf
+twk start "login bug"
+twk end "login bug"
+.fi
+.RE
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+Error (missing dependency, invalid arguments, API failure, or no
+active session).
+.SH BUGS
+Report bugs at https://github.com/Code-of-The-Forbidden-One/TWAK/issues
+.SH AUTHORS
+Victory Technology

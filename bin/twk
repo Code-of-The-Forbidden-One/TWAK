@@ -2,7 +2,8 @@
 set -euo pipefail
 
 readonly TWK_VERSION="0.1.0"
-readonly TWK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly TWK_SCRIPT="$(readlink -f "${BASH_SOURCE[0]}")"
+readonly TWK_ROOT="$(cd "$(dirname "${TWK_SCRIPT}")/.." && pwd)"
 readonly TWK_LIB="${TWK_ROOT}/lib"
 readonly TWK_CONFIG_DIR="${HOME}/.config/twk"
 readonly TWK_DATA_DIR="${HOME}/.local/share/twk/sessions"
@@ -12,6 +13,7 @@ source "${TWK_LIB}/azdo.sh"
 source "${TWK_LIB}/resolve.sh"
 source "${TWK_LIB}/session.sh"
 source "${TWK_LIB}/display.sh"
+source "${TWK_LIB}/help.sh"
 
 check_dependencies() {
     local missing=()
@@ -52,6 +54,11 @@ USAGE
 main() {
     local command="${1:-}"
     shift || true
+
+    if is_help_flag "${1:-}"; then
+        show_subcommand_help "${command}"
+        return
+    fi
 
     case "${command}" in
         init)    cmd_init "$@" ;;

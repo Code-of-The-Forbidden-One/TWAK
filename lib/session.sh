@@ -125,11 +125,53 @@ session_work_item_id_from_path() {
     basename "${file_path}" .session
 }
 
+parse_state_flag() {
+    local args=("$@")
+    local i
+    for (( i=0; i<${#args[@]}; i++ )); do
+        if [[ "${args[i]}" == "--state" ]] && [[ $(( i + 1 )) -lt ${#args[@]} ]]; then
+            echo "${args[i+1]}"
+            return
+        fi
+    done
+}
+
+parse_query_arg() {
+    local args=("$@")
+    local i
+    for (( i=0; i<${#args[@]}; i++ )); do
+        if [[ "${args[i]}" == "--state" ]]; then
+            i=$(( i + 1 ))
+            continue
+        fi
+        echo "${args[i]}"
+        return
+    done
+}
+
+apply_state_change() {
+    local work_item_id="$1"
+    local new_state="$2"
+
+    if [[ -z "${new_state}" ]]; then
+        return
+    fi
+
+    if azdo_update_state "${work_item_id}" "${new_state}" 2>/dev/null; then
+        echo "  State set to ${new_state}"
+    else
+        echo "  Warning: could not set state to ${new_state}" >&2
+    fi
+}
+
 cmd_start() {
     config_require
-    local query="${1:-}"
-    local work_item_id
+    local query
+    query="$(parse_query_arg "$@")"
+    local target_state
+    target_state="$(parse_state_flag "$@")"
 
+    local work_item_id
     work_item_id="$(resolve_work_item "${query}")" || return 1
 
     local current_state
@@ -143,18 +185,22 @@ cmd_start() {
     if [[ "${current_state}" == "${STATE_PAUSED}" ]]; then
         session_append "${work_item_id}" "resume"
         echo "Resumed tracking #${work_item_id}"
-        return
+    else
+        session_append "${work_item_id}" "start"
+        echo "Started tracking #${work_item_id}"
     fi
 
-    session_append "${work_item_id}" "start"
-    echo "Started tracking #${work_item_id}"
+    apply_state_change "${work_item_id}" "${target_state}"
 }
 
 cmd_pause() {
     config_require
-    local query="${1:-}"
-    local work_item_id
+    local query
+    query="$(parse_query_arg "$@")"
+    local target_state
+    target_state="$(parse_state_flag "$@")"
 
+    local work_item_id
     work_item_id="$(resolve_work_item "${query}")" || return 1
 
     local current_state
@@ -170,13 +216,18 @@ cmd_pause() {
     local elapsed_seconds
     elapsed_seconds="$(session_calculate_elapsed_seconds "${work_item_id}")"
     echo "Paused #${work_item_id} ($(format_duration "${elapsed_seconds}") tracked)"
+
+    apply_state_change "${work_item_id}" "${target_state}"
 }
 
 cmd_end() {
     config_require
-    local query="${1:-}"
-    local work_item_id
+    local query
+    query="$(parse_query_arg "$@")"
+    local target_state
+    target_state="$(parse_state_flag "$@")"
 
+    local work_item_id
     work_item_id="$(resolve_work_item "${query}")" || return 1
 
     local current_state
@@ -197,4 +248,23 @@ cmd_end() {
     local elapsed_seconds
     elapsed_seconds="$(session_calculate_elapsed_seconds "${work_item_id}")"
     echo "Ended #${work_item_id} ($(format_duration "${elapsed_seconds}") total)"
+
+    apply_state_change "${work_item_id}" "${target_state}"
+}
+
+cmd_done() {
+    config_require
+    local query
+    query="$(parse_query_arg "$@")"
+    local target_state
+    target_state="$(parse_state_flag "$@")"
+
+    if [[ -z "${target_state}" ]]; then
+        target_state="${TWK_STATE_DONE}"
+    fi
+
+    local work_item_id
+    work_item_id="$(resolve_work_item "${query}")" || return 1
+
+    apply_state_change "${work_item_id}" "${target_state}"
 }

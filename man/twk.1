@@ -27,25 +27,42 @@ Multiple work items can be tracked in parallel for easy context switching.
 .TP
 .B init
 Configure the Azure DevOps connection. Prompts for organisation, project,
-team, and personal access token. Stores credentials at
+team, personal access token, and time tracking field names. Stores
+credentials at
 .I ~/.config/twk/config
 with restrictive permissions.
 .TP
-.B start \fR[\fItask\fR]
+.B start \fR[\fItask\fR] [\fB\-\-state\fR \fIstate\fR]
 Start timing a work item. If the item is paused, resumes it instead.
+Use
+.B \-\-state
+to set the work item state in Azure DevOps (e.g. Doing, Active).
 .TP
-.B pause \fR[\fItask\fR]
+.B pause \fR[\fItask\fR] [\fB\-\-state\fR \fIstate\fR]
 Pause an active timing session. Elapsed time is preserved.
+Use
+.B \-\-state
+to set the work item state in Azure DevOps (e.g. Paused).
 .TP
-.B end \fR[\fItask\fR]
+.B end \fR[\fItask\fR] [\fB\-\-state\fR \fIstate\fR]
 End a timing session. The item can be running or paused.
+Use
+.B \-\-state
+to set the work item state in Azure DevOps (e.g. Done).
+.TP
+.B done \fR[\fItask\fR] [\fB\-\-state\fR \fIstate\fR]
+Set the work item state in Azure DevOps without affecting any active
+timer session. Uses the configured done state by default, or a specific
+state via
+.BR \-\-state .
 .TP
 .B status
 Display all uncommitted time entries with elapsed time and decimal hours.
 .TP
 .B commit
-Push accumulated time to the Completed Work field on each work item in
-Azure DevOps. Time is additive. Running sessions are skipped.
+Push accumulated time to the configured time field on each work item in
+Azure DevOps. The target field depends on work item type (Task vs Feature)
+as configured during init. Time is additive. Running sessions are skipped.
 .TP
 .B version
 Print the version number.
@@ -74,9 +91,10 @@ Run
 .B twk init
 to create the configuration file at
 .IR ~/.config/twk/config .
-The file stores your Azure DevOps organisation, project, team, and
-personal access token. The config directory is set to mode 700 and
-the config file to mode 600.
+The file stores your Azure DevOps organisation, project, team,
+personal access token, and the field names used for time tracking
+(which may differ between Tasks and Features). The config directory
+is set to mode 700 and the config file to mode 600.
 .PP
 Your PAT requires the
 .B "Work Items (Read & Write)"

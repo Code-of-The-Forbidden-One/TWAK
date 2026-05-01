@@ -89,18 +89,45 @@ Configures your Azure DevOps connection. You will be prompted for:
 - **Project** - the project containing your boards (e.g. `MyProject`)
 - **Team** - your team name, or leave blank for the default team
 - **Personal Access Token** - a PAT with **Work Items (Read & Write)** scope
+- **Time field for Tasks** - the AzDO field name to write time to for tasks (e.g. `Custom.TimeSpent`, `Microsoft.VSTS.Scheduling.CompletedWork`)
+- **Time field for Features** - the AzDO field name for features, or leave blank if the same as tasks
+- **State for start** - the AzDO state name to use with `--state` on start (default: `Active`)
+- **State for pause** - the AzDO state name to use with `--state` on pause (default: `Paused`)
+- **State for end --done** - the AzDO state name to use with `--done` (default: `Done`)
 
 Configuration is stored at `~/.config/twk/config` with restrictive file permissions (`600`).
 
 ```
 $ twk init
-twk - Azure DevOps Configuration
-=================================
+  _________      __   _____   ____  __.
+ /\__  ___/\    /  \ /  _  \ |    |/ _|
+ \/_/  \   \/\/  /  /  /_\  \|      <
+    |   |  \    /  /    |    \    |  \
+    |___|   \/\/   \____|__  /____|__ \
+                           \/        \/
+     Time Worked and Committed
+
+  Azure DevOps Configuration
 
 Organisation (e.g. myorg): contoso
 Project (e.g. MyProject): Platform
 Team (e.g. MyTeam, or leave blank for default): Backend
 Personal Access Token: ****
+
+Time tracking fields
+These are the Azure DevOps field names that twk writes time to.
+Common values: Microsoft.VSTS.Scheduling.CompletedWork, Custom.TimeSpent
+
+Time field for Tasks (e.g. Custom.TimeSpent): Custom.TimeSpent
+Time field for Features (leave blank if same as Tasks):
+
+Work item states
+These map twk actions to your board's column/state names.
+Leave blank to skip state updates for that action.
+
+State for start (default: Active): Doing
+State for pause (default: Paused):
+State for end --done (default: Done):
 
 Configuration saved to /home/user/.config/twk/config
 Testing connection...
@@ -109,7 +136,7 @@ Connected successfully.
 
 ---
 
-### `twk start [task]`
+### `twk start [task] [--state <state>]`
 
 Starts a timing session on a work item. Supports three resolution modes:
 
@@ -123,9 +150,12 @@ If a title search returns multiple matches, you will be prompted to choose.
 
 If the work item is currently paused, `twk start` resumes it automatically.
 
+Use `--state` to update the work item state in Azure DevOps (e.g. `--state Doing`).
+
 ```
-$ twk start "auth refactor"
+$ twk start "auth refactor" --state Doing
 Started tracking #48210
+  State set to Doing
 
 $ twk start 48210
 Error: work item #48210 is already running.
@@ -133,28 +163,53 @@ Error: work item #48210 is already running.
 
 ---
 
-### `twk pause [task]`
+### `twk pause [task] [--state <state>]`
 
 Pauses an active timing session. The elapsed time so far is preserved - you can resume with `twk start` at any point.
+
+Use `--state` to update the work item state in Azure DevOps (e.g. `--state Paused`).
 
 The same task resolution modes apply (ID, title match, or interactive).
 
 ```
-$ twk pause 48210
+$ twk pause 48210 --state Paused
 Paused #48210 (01:34:12 tracked)
+  State set to Paused
 ```
 
 ---
 
-### `twk end [task]`
+### `twk end [task] [--state <state>]`
 
 Ends a timing session on a work item. The session is finalised and ready to commit.
 
-You can end a work item that is either running or paused.
+You can end a work item that is either running or paused. By default, ending a session does not change the work item state. Use `--state` to set the state explicitly.
 
 ```
 $ twk end 48210
 Ended #48210 (03:22:45 total)
+
+$ twk end 48215 --state Done
+Ended #48215 (01:15:30 total)
+  State set to Done
+
+$ twk end 48220 --state "Code Review"
+Ended #48220 (00:45:00 total)
+  State set to Code Review
+```
+
+---
+
+### `twk done [task] [--state <state>]`
+
+Sets the work item state in Azure DevOps without affecting any active timer session. Uses the configured "done" state by default, or a specific state via `--state`.
+
+```
+$ twk done 48210
+  State set to Done
+
+$ twk done 48215 --state "Code Review"
+  State set to Code Review
 ```
 
 ---
@@ -180,9 +235,10 @@ Uncommitted time entries:
 
 ### `twk commit`
 
-Pushes all uncommitted time entries to Azure DevOps by updating the **Completed Work** field on each work item.
+Pushes all uncommitted time entries to Azure DevOps by updating the configured time field on each work item.
 
-- Time is **additive** - `twk` reads the existing Completed Work value and adds your tracked hours to it
+- Time is **additive** - `twk` reads the existing value and adds your tracked hours to it
+- The target field is determined by work item type (Task vs Feature) based on your `twk init` configuration
 - Work items that are still running are **skipped** - end or pause them first
 - Committed sessions are archived to `~/.local/share/twk/sessions/committed/` for audit
 
@@ -223,6 +279,7 @@ Usage:
     twk start [task]            Start timing a work item
     twk pause [task]            Pause timing a work item
     twk end [task]              Stop timing a work item
+    twk done [task]             Mark a work item as done
     twk status                  View uncommitted time entries
     twk commit                  Push time entries to Azure DevOps
     twk version                 Show version
@@ -352,7 +409,8 @@ Generate a PAT at: `https://dev.azure.com/{your-org}/_usersettings/tokens`
 | `System.Title`                                 | Title matching and display         |
 | `System.WorkItemType`                          | Display in interactive picker      |
 | `System.State`                                 | Display in interactive picker      |
-| `Microsoft.VSTS.Scheduling.CompletedWork`      | Read on commit, updated with tracked hours |
+| `System.State`                                 | Updated on start (Active), pause (Paused), end --done (Done) |
+| Configured time field (e.g. `Custom.TimeSpent`) | Read on commit, updated with tracked hours |
 | `Microsoft.VSTS.Scheduling.RemainingWork`      | Fetched for reference              |
 | `Microsoft.VSTS.Scheduling.StartDate`          | Fetched for reference              |
 | `Microsoft.VSTS.Scheduling.TargetDate`         | Fetched for reference              |

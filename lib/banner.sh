@@ -6,6 +6,6 @@ print_banner() {
     |   |  \    /  /    |    \    |  \
     |___|   \/\/   \____|__  /____|__ \
                            \/        \/
-     Timed Worked and Committed
+     Task Worked and Committed
 BANNER
 }

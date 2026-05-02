@@ -146,8 +146,12 @@ normalise_description() {
         return
     fi
     local plain
+    # Replace tags with a single space (not empty) so adjacent tags
+    # like </div><br> don't fuse the surrounding words together.
+    # The whitespace-collapse step below normalises any double-spacing
+    # that introduces.
     plain="$(printf '%s' "${html}" \
-        | sed 's/<[^>]*>//g
+        | sed 's/<[^>]*>/ /g
                s/&nbsp;/ /g
                s/&amp;/\&/g
                s/&lt;/</g

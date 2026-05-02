@@ -370,7 +370,7 @@ setup() {
     [[ "${output}" != *"99h"* ]] || { echo "should not have used task field; got: ${output}"; return 1; }
 }
 
-@test "render_list_item: long title truncates to 40 chars with '...' in summary row" {
+@test "render_list_item: long title truncates to LIST_TITLE_WIDTH chars with '...' in summary row" {
     require_binary jq
 
     export TWK_TIME_FIELD_TASK="Custom.TaskTime"
@@ -386,8 +386,9 @@ setup() {
     assert_status 0
     local first_line
     first_line="$(printf '%s\n' "${output}" | head -n1)"
-    # Title truncated to first 37 chars + "..."
-    [[ "${first_line}" == *"This is an exceedingly long work item"* ]] || { echo "got: ${first_line}"; return 1; }
+    # LIST_TITLE_WIDTH is 32 → first 29 chars + "..." (the title column
+    # was narrowed when the Assigned column was added).
+    [[ "${first_line}" == *"This is an exceedingly long"* ]] || { echo "got: ${first_line}"; return 1; }
     [[ "${first_line}" == *"..."* ]] || { echo "no truncation suffix: ${first_line}"; return 1; }
     [[ "${first_line}" != *"overflows the column"* ]] || { echo "title not truncated: ${first_line}"; return 1; }
 }
@@ -413,14 +414,15 @@ setup() {
     [[ "${second_line}" == "           Sub-line content here." ]] || { echo "got: '${second_line}'"; return 1; }
 }
 
-@test "cmd_list: rejects extra arguments" {
+@test "cmd_list: rejects unknown arguments" {
     twk_write_fake_config
     config_global_file() { printf '%s\n' "${TWK_CONFIG_DIR}/config"; }
     config_find_local() { return 1; }
 
     run cmd_list extra
     assert_status 1
-    assert_output_contains "takes no arguments"
+    assert_output_contains "unknown argument"
+    assert_output_contains "Usage: twk list"
 }
 
 @test "cmd_list: errors when no current iteration" {
@@ -585,7 +587,7 @@ setup() {
 
 @test "twk_pager: passes through stdin to stdout when stdout is not a tty" {
     # In bats, run captures via pipe, so [[ -t 1 ]] is false → cat path.
-    run bash -c 'source /home/lukemccann/Projects/TWAK/lib/display.sh; printf "hello\nworld\n" | twk_pager'
+    run bash -c "source '${TWK_REPO}/lib/display.sh'; printf 'hello\nworld\n' | twk_pager"
     assert_status 0
     [[ "${output}" == "hello"$'\n'"world" ]] || { echo "got: ${output}"; return 1; }
 }
@@ -860,17 +862,6 @@ setup() {
     assert_output_contains "requires fzf"
 }
 
-@test "cmd_list: rejects unknown arguments" {
-    twk_write_fake_config
-    config_global_file() { printf '%s\n' "${TWK_CONFIG_DIR}/config"; }
-    config_find_local() { return 1; }
-
-    run cmd_list --bogus
-    assert_status 1
-    assert_output_contains "unknown argument"
-    assert_output_contains "Usage: twk list"
-}
-
 @test "render_list_row: emits the summary row only (no description sub-line)" {
     require_binary jq
 
@@ -985,10 +976,8 @@ setup() {
     require_binary jq
     twk_write_fake_config
 
-    # Stub the task resolver — returns a known ID without going to the network.
     resolve_work_item() { echo "777"; }
 
-    # Fake editor: writes a known body into the tmpfile path it's invoked with.
     local fake_editor
     fake_editor="$(mktemp -t twk-fake-editor-XXXXXX)"
     cat > "${fake_editor}" <<'EOF'
@@ -997,10 +986,13 @@ printf '%s\n' "drafted in editor" > "$1"
 EOF
     chmod +x "${fake_editor}"
 
-    local captured_id="" captured_text=""
+    # Capture POST args via tmpfiles so the subshell mutations under `run`
+    # survive into the parent test scope.
+    local cap_id="${BATS_TEST_TMPDIR}/post_id"
+    local cap_text="${BATS_TEST_TMPDIR}/post_text"
     azdo_post_comment() {
-        captured_id="$1"
-        captured_text="$2"
+        printf '%s' "$1" > "${cap_id}"
+        printf '%s' "$2" > "${cap_text}"
         printf '%s' '{"createdDate":"2026-05-02T10:00:00Z"}'
     }
 
@@ -1008,8 +1000,9 @@ EOF
     rm -f "${fake_editor}"
 
     assert_status 0
-    [[ "${captured_id}" == "777" ]] || { echo "got id: ${captured_id}"; return 1; }
-    [[ "${captured_text}" == *"drafted in editor"* ]] || { echo "got text: ${captured_text}"; return 1; }
+    [[ -f "${cap_id}" ]] || { echo "azdo_post_comment was not called"; return 1; }
+    [[ "$(cat "${cap_id}")" == "777" ]] || { echo "got id: $(cat "${cap_id}")"; return 1; }
+    [[ "$(cat "${cap_text}")" == *"drafted in editor"* ]] || { echo "got text: $(cat "${cap_text}")"; return 1; }
     assert_output_contains "Posted comment on #777"
     assert_output_contains "drafted in editor"
 }
@@ -1020,7 +1013,6 @@ EOF
 
     resolve_work_item() { echo "888"; }
 
-    # Editor that erases the file (simulates user clearing all content).
     local fake_editor
     fake_editor="$(mktemp -t twk-fake-editor-XXXXXX)"
     cat > "${fake_editor}" <<'EOF'
@@ -1029,15 +1021,17 @@ EOF
 EOF
     chmod +x "${fake_editor}"
 
-    local posted=false
-    azdo_post_comment() { posted=true; }
+    # Sentinel file: created if azdo_post_comment fires. Test asserts it
+    # does NOT exist after the run.
+    local sentinel="${BATS_TEST_TMPDIR}/post_called"
+    azdo_post_comment() { : > "${sentinel}"; }
 
     EDITOR="${fake_editor}" run cmd_comment
     rm -f "${fake_editor}"
 
     assert_status 1
     assert_output_contains "empty comment, aborting"
-    [[ "${posted}" == false ]] || { echo "POST should not have fired"; return 1; }
+    [[ ! -e "${sentinel}" ]] || { echo "POST fired despite empty editor buffer"; return 1; }
 }
 
 @test "cmd_comment: editor mode strips '#'-prefixed lines from the body" {
@@ -1060,9 +1054,9 @@ INNER
 EOF
     chmod +x "${fake_editor}"
 
-    local captured_text=""
+    local cap_text="${BATS_TEST_TMPDIR}/post_text"
     azdo_post_comment() {
-        captured_text="$2"
+        printf '%s' "$2" > "${cap_text}"
         printf '%s' '{"createdDate":"2026-05-02T10:00:00Z"}'
     }
 
@@ -1070,8 +1064,11 @@ EOF
     rm -f "${fake_editor}"
 
     assert_status 0
-    [[ "${captured_text}" == *"real content here"* ]] || { echo "missing first content line"; return 1; }
-    [[ "${captured_text}" == *"more real content"* ]] || { echo "missing second content line"; return 1; }
+    [[ -f "${cap_text}" ]] || { echo "azdo_post_comment was not called"; return 1; }
+    local captured_text
+    captured_text="$(cat "${cap_text}")"
+    [[ "${captured_text}" == *"real content here"* ]] || { echo "missing first content line: ${captured_text}"; return 1; }
+    [[ "${captured_text}" == *"more real content"* ]] || { echo "missing second content line: ${captured_text}"; return 1; }
     [[ "${captured_text}" != *"help line"* ]] || { echo "comment line leaked into body: ${captured_text}"; return 1; }
     [[ "${captured_text}" != *"stripped line"* ]] || { echo "comment line leaked into body: ${captured_text}"; return 1; }
 }

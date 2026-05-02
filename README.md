@@ -2,7 +2,7 @@
   <img src="images/twk_banner.png" alt="TWAK Banner" width="100%" />
 </p>
 
-<h1 align="center">TWAK - Task Worked and Committed</h1>
+<h1 align="center">TWAK - Task Worked Azure Committed</h1>
 
 <p align="center">
   A lightweight CLI for tracking time against Azure DevOps work items, directly from the terminal.
@@ -132,7 +132,7 @@ $ twk init
     |   |  \    /  /    |    \    |  \
     |___|   \/\/   \____|__  /____|__ \
                            \/        \/
-     Task Worked and Committed
+     Task Worked Azure Committed
 
   Azure DevOps Configuration (local: /home/user/Projects/Platform)
 

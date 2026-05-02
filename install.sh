@@ -54,7 +54,7 @@ configure_shell_profile() {
 
     if [[ "${answer}" =~ ^[Yy]$ ]]; then
         echo "" >> "${profile_file}"
-        echo "# twk - Task Worked and Committed" >> "${profile_file}"
+        echo "# twk - Task Worked Azure Committed" >> "${profile_file}"
         for line in "${lines_to_add[@]}"; do
             echo "${line}" >> "${profile_file}"
         done

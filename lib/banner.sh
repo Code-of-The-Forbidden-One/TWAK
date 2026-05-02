@@ -6,6 +6,6 @@ print_banner() {
     |   |  \    /  /    |    \    |  \
     |___|   \/\/   \____|__  /____|__ \
                            \/        \/
-     Task Worked and Committed
+     Task Worked Azure Committed
 BANNER
 }

@@ -614,17 +614,24 @@ cmd_comment() {
     fi
 
     local task_query="${positional[0]:-}"
-    local text_arg="${positional[1]:-}"
+    local text_arg=""
+    local has_text_arg=false
+    if [[ ${#positional[@]} -ge 2 ]]; then
+        has_text_arg=true
+        text_arg="${positional[1]}"
+    fi
 
     local work_item_id
     work_item_id="$(resolve_work_item "${task_query}")" || return 1
 
     local text
-    if [[ "${text_arg}" == "-" ]]; then
-        # Read from stdin (e.g. piped: cat notes.txt | twk comment 12345 -)
-        text="$(cat)"
-    elif [[ -n "${text_arg}" ]]; then
-        text="${text_arg}"
+    if [[ "${has_text_arg}" == true ]]; then
+        if [[ "${text_arg}" == "-" ]]; then
+            # Read from stdin (e.g. piped: cat notes.txt | twk comment 12345 -)
+            text="$(cat)"
+        else
+            text="${text_arg}"
+        fi
     else
         # Open $EDITOR (or $VISUAL, falling back to vi). The editor takes
         # over the terminal directly — no command substitution wrapping.
@@ -929,7 +936,9 @@ cmd_status() {
                 existing_display="?"
                 total_display="?"
             else
-                existing_display="${existing}h"
+                # Normalise to 2dp so a JSON value like 4.2 renders as 4.20h,
+                # matching the formatting of tracked/total columns.
+                existing_display="$(echo "scale=2; ${existing} / 1" | bc)h"
                 total_display="$(echo "scale=2; ${existing} + ${hours_decimal}" | bc)h"
                 total_existing="$(echo "scale=2; ${total_existing} + ${existing}" | bc)"
                 total_combined="$(echo "scale=2; ${total_combined} + ${existing} + ${hours_decimal}" | bc)"
@@ -1031,7 +1040,11 @@ cmd_commit() {
         total_hours="$(echo "scale=2; ${existing_hours} + ${new_hours}" | bc)"
 
         if [[ "${dry_run}" == true ]]; then
-            echo "  #${work_item_id}: would commit ${new_hours}h (existing ${existing_hours}h → total ${total_hours}h)"
+            # Normalise existing to 2dp so it lines up with the tracked/total
+            # columns (e.g. JSON 1 → "1.00", JSON 4.2 → "4.20").
+            local existing_hours_fmt
+            existing_hours_fmt="$(echo "scale=2; ${existing_hours} / 1" | bc)"
+            echo "  #${work_item_id}: would commit ${new_hours}h (existing ${existing_hours_fmt}h → total ${total_hours}h)"
             success_count=$(( success_count + 1 ))
             would_hours_total="$(echo "scale=2; ${would_hours_total} + ${new_hours}" | bc)"
         else

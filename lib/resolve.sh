@@ -189,8 +189,13 @@ resolve_interactive() {
     fi
 
     # Augment with local session info and drop items we can't start (running).
-    # Each output row:
-    #   id<TAB>type<TAB>title<TAB>azdo_state<TAB>session_state<TAB>elapsed<TAB>assigned
+    # Each output row uses US (\x1f) as the field separator — NOT tab. Bash's
+    # `read` collapses runs of whitespace IFS chars (incl. tab), so tab-
+    # separated rows with empty middle fields would shift later columns into
+    # earlier ones (e.g. 'assigned' silently absorbed into 'sess_state' when
+    # both session columns are empty). \x1f isn't whitespace, so empty fields
+    # round-trip intact.
+    #   id<US>type<US>title<US>azdo_state<US>session_state<US>elapsed<US>assigned
     local items_list=""
     local id type title azdo_state assigned sess_state elapsed_str
     local hidden_running=0
@@ -205,7 +210,7 @@ resolve_interactive() {
             fi
             elapsed_str="$(format_duration "$(session_calculate_elapsed_seconds "${id}")")"
         fi
-        items_list+="${id}"$'\t'"${type}"$'\t'"$(truncate_title "${title}")"$'\t'"${azdo_state}"$'\t'"${sess_state}"$'\t'"${elapsed_str}"$'\t'"$(truncate_title "${assigned}" 15)"$'\n'
+        items_list+="${id}"$'\x1f'"${type}"$'\x1f'"$(truncate_title "${title}")"$'\x1f'"${azdo_state}"$'\x1f'"${sess_state}"$'\x1f'"${elapsed_str}"$'\x1f'"$(truncate_title "${assigned}" 15)"$'\n'
     done <<< "${raw_items}"
 
     items_list="${items_list%$'\n'}"
@@ -233,7 +238,7 @@ resolve_with_fzf() {
     # for paused items and 15 spaces of padding otherwise so the Assigned
     # column lines up across rows.
     local display_list
-    display_list="$(echo "${items_list}" | awk -F'\t' '{
+    display_list="$(echo "${items_list}" | awk -F$'\x1f' '{
         if ($5 == "paused") {
             sess = sprintf("paused %-8s", $6)
         } else {
@@ -259,7 +264,7 @@ resolve_with_numbered_list() {
     echo "Current sprint work items:" >&2
     local index=1
     local item_id item_type item_title item_state sess_state elapsed assigned
-    while IFS=$'\t' read -r item_id item_type item_title item_state sess_state elapsed assigned; do
+    while IFS=$'\x1f' read -r item_id item_type item_title item_state sess_state elapsed assigned; do
         if [[ "${sess_state}" == "paused" ]]; then
             printf "  %2d) #%-7s [%-12s] %-10s %-40s paused %-8s %s\n" \
                 "${index}" "${item_id}" "${item_type}" "${item_state}" "${item_title}" "${elapsed}" "${assigned}" >&2
@@ -284,7 +289,7 @@ resolve_with_numbered_list() {
         return 1
     fi
 
-    echo "${items_list}" | sed -n "${selection}p" | cut -f1
+    echo "${items_list}" | sed -n "${selection}p" | cut -d$'\x1f' -f1
 }
 
 resolve_self() {

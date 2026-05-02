@@ -172,17 +172,26 @@ def run_filter(filt: str, value: Any, args: dict[str, str]) -> list[Any]:
         except Exception:
             return [[]]
 
-    # resolve_interactive: '.value[] | "<id>\t<type>\t<title>\t<state>"'
+    # resolve_interactive:
+    #   '.value[] | "<id>\t<type>\t<title>\t<state>\t<assignedDisplayName | "->"'
     if ".value[]" in f and "System.WorkItemType" in f and "System.Title" in f and "System.State" in f and "select" not in f:
         out = []
         for item in (value or {}).get("value", []):
             fields = item.get("fields", {})
-            out.append("\t".join([
+            cols = [
                 str(item.get("id", "")),
                 str(fields.get("System.WorkItemType", "")),
                 str(fields.get("System.Title", "")),
                 str(fields.get("System.State", "")),
-            ]))
+            ]
+            if "System.AssignedTo" in f:
+                # `.fields["System.AssignedTo"].displayName? // "-"`
+                assigned_to = fields.get("System.AssignedTo")
+                if isinstance(assigned_to, dict):
+                    cols.append(str(assigned_to.get("displayName") or "-"))
+                else:
+                    cols.append("-")
+            out.append("\t".join(cols))
         return out
 
     # resolve_by_title: '.value[] | select(.fields["System.Title"] | ascii_downcase | contains($term | ascii_downcase)) | "<id>\t<title>"'

@@ -618,12 +618,6 @@ setup() {
         echo "pause|1700001800"
     } > "${TWK_DATA_DIR}/12345.session"
 
-    local captured_query=""
-    resolve_for_session_action() {
-        captured_query="$1"
-        echo "12345"
-    }
-
     run bash -c "
         source '${TWK_REPO}/lib/config.sh'
         source '${TWK_REPO}/lib/azdo.sh'
@@ -632,7 +626,9 @@ setup() {
         source '${TWK_REPO}/lib/display.sh'
         export TWK_DATA_DIR='${TWK_DATA_DIR}'
         export TWK_CONFIG_DIR='${TWK_CONFIG_DIR}'
-        resolve_for_session_action() { echo \"got_query=\$1\"; echo '12345'; }
+        # Debug echo goes to stderr so it shows up in \${output} (run merges
+        # stdout+stderr) without polluting the work_item_id captured via \$().
+        resolve_for_session_action() { echo \"got_query=\$1\" >&2; echo '12345'; }
         echo '+10m' | cmd_adjust 12345
     "
     assert_status 0
@@ -677,6 +673,14 @@ setup() {
 @test "cmd_adjust: rejects amount without +/-/= prefix" {
     twk_write_fake_config
 
+    # cmd_adjust requires a session to exist before it parses the amount, so
+    # give it one — we're testing the amount-format error, not the
+    # missing-session error.
+    {
+        echo "start|1700000000"
+        echo "pause|1700001800"
+    } > "${TWK_DATA_DIR}/12345.session"
+
     run cmd_adjust 12345 30m
     assert_status 1
     assert_output_contains "must start with +, -, or ="
@@ -684,6 +688,11 @@ setup() {
 
 @test "cmd_adjust: rejects invalid duration after the operator" {
     twk_write_fake_config
+
+    {
+        echo "start|1700000000"
+        echo "pause|1700001800"
+    } > "${TWK_DATA_DIR}/12345.session"
 
     run cmd_adjust 12345 +xyz
     assert_status 1
@@ -816,19 +825,22 @@ setup() {
         printf '%s' '{"id":12345,"fields":{"Custom.TaskTime":4.2}}'
     }
 
-    local captured_id="" captured_value="" captured_field=""
+    # Tmpfile capture survives the subshell that `run` spawns.
+    local cap_id="${BATS_TEST_TMPDIR}/patch_id"
+    local cap_value="${BATS_TEST_TMPDIR}/patch_value"
+    local cap_field="${BATS_TEST_TMPDIR}/patch_field"
     azdo_update_time_spent() {
-        captured_id="$1"
-        captured_value="$2"
-        captured_field="$3"
+        printf '%s' "$1" > "${cap_id}"
+        printf '%s' "$2" > "${cap_value}"
+        printf '%s' "$3" > "${cap_field}"
         return 0
     }
 
     run cmd_reset 12345 --yes
     assert_status 0
-    [[ "${captured_id}" == "12345" ]] || { echo "got id: ${captured_id}"; return 1; }
-    [[ "${captured_value}" == "0" ]] || { echo "got value: ${captured_value}"; return 1; }
-    [[ "${captured_field}" == "Custom.TaskTime" ]] || { echo "got field: ${captured_field}"; return 1; }
+    [[ "$(cat "${cap_id}" 2>/dev/null)" == "12345" ]] || { echo "got id: $(cat "${cap_id}" 2>/dev/null)"; return 1; }
+    [[ "$(cat "${cap_value}" 2>/dev/null)" == "0" ]] || { echo "got value: $(cat "${cap_value}" 2>/dev/null)"; return 1; }
+    [[ "$(cat "${cap_field}" 2>/dev/null)" == "Custom.TaskTime" ]] || { echo "got field: $(cat "${cap_field}" 2>/dev/null)"; return 1; }
     assert_output_contains "Reset #12345 (was 4.2h, now 0h)"
 }
 
@@ -855,6 +867,11 @@ setup() {
     azdo_fetch_work_item() { printf '%s' '{"id":12345,"fields":{"Custom.TaskTime":2.0}}'; }
     azdo_update_time_spent() { return 0; }
 
+    # cmd_reset wraps azdo_update_time_spent with `> /dev/null 2>&1`, so the
+    # mock can't echo to stdout/stderr to assert on. Capture to a tmpfile
+    # instead.
+    local cap_patch="${BATS_TEST_TMPDIR}/patch"
+
     run bash -c "
         source '${TWK_REPO}/lib/config.sh'
         source '${TWK_REPO}/lib/azdo.sh'
@@ -865,12 +882,12 @@ setup() {
         export TWK_CONFIG_DIR='${TWK_CONFIG_DIR}'
         azdo_resolve_time_field() { echo 'Custom.TaskTime'; }
         azdo_fetch_work_item() { printf '%s' '{\"id\":12345,\"fields\":{\"Custom.TaskTime\":2.0}}'; }
-        azdo_update_time_spent() { echo \"PATCH \$1 = \$2\"; }
+        azdo_update_time_spent() { printf 'PATCH %s = %s' \"\$1\" \"\$2\" > '${cap_patch}'; }
         echo y | cmd_reset 12345
     "
     assert_status 0
     assert_output_contains "Current"
-    assert_output_contains "PATCH 12345 = 0"
+    [[ "$(cat "${cap_patch}" 2>/dev/null)" == "PATCH 12345 = 0" ]] || { echo "got patch: $(cat "${cap_patch}" 2>/dev/null)"; return 1; }
     assert_output_contains "Reset #12345"
 }
 
@@ -990,10 +1007,11 @@ setup() {
 @test "cmd_assign: with both args specified PATCHes without invoking pickers" {
     twk_write_fake_config
 
-    local captured_id="" captured_user=""
+    local cap_id="${BATS_TEST_TMPDIR}/assign_id"
+    local cap_user="${BATS_TEST_TMPDIR}/assign_user"
     azdo_update_assigned_to() {
-        captured_id="$1"
-        captured_user="$2"
+        printf '%s' "$1" > "${cap_id}"
+        printf '%s' "$2" > "${cap_user}"
         return 0
     }
     # Pickers should not be called.
@@ -1002,18 +1020,17 @@ setup() {
     run cmd_assign 12345 "luke@example.com"
     assert_status 0
     assert_output_contains "Assigned #12345 to luke@example.com"
-    [[ "${captured_id}" == "12345" ]] || { echo "got id: ${captured_id}"; return 1; }
-    [[ "${captured_user}" == "luke@example.com" ]] || { echo "got user: ${captured_user}"; return 1; }
+    [[ "$(cat "${cap_id}" 2>/dev/null)" == "12345" ]] || { echo "got id: $(cat "${cap_id}" 2>/dev/null)"; return 1; }
+    [[ "$(cat "${cap_user}" 2>/dev/null)" == "luke@example.com" ]] || { echo "got user: $(cat "${cap_user}" 2>/dev/null)"; return 1; }
     [[ "${output}" != *"PICKER MUST NOT FIRE"* ]] || { echo "user picker fired despite explicit user"; return 1; }
 }
 
 @test "cmd_assign: with task only invokes user picker, then PATCHes" {
     twk_write_fake_config
 
-    local captured_id="" captured_user=""
+    local cap_user="${BATS_TEST_TMPDIR}/assign_user"
     azdo_update_assigned_to() {
-        captured_id="$1"
-        captured_user="$2"
+        printf '%s' "$2" > "${cap_user}"
         return 0
     }
     # Override the user picker to return a deterministic value.
@@ -1022,16 +1039,17 @@ setup() {
     run cmd_assign 12345
     assert_status 0
     assert_output_contains "Assigned #12345 to alice@example.com"
-    [[ "${captured_user}" == "alice@example.com" ]] || { echo "user not picked: ${captured_user}"; return 1; }
+    [[ "$(cat "${cap_user}" 2>/dev/null)" == "alice@example.com" ]] || { echo "user not picked: $(cat "${cap_user}" 2>/dev/null)"; return 1; }
 }
 
 @test "cmd_assign: with no args invokes both pickers, then PATCHes" {
     twk_write_fake_config
 
-    local captured_id="" captured_user=""
+    local cap_id="${BATS_TEST_TMPDIR}/assign_id"
+    local cap_user="${BATS_TEST_TMPDIR}/assign_user"
     azdo_update_assigned_to() {
-        captured_id="$1"
-        captured_user="$2"
+        printf '%s' "$1" > "${cap_id}"
+        printf '%s' "$2" > "${cap_user}"
         return 0
     }
     # Stub task resolver to return an ID without going to the network.
@@ -1041,8 +1059,8 @@ setup() {
     run cmd_assign
     assert_status 0
     assert_output_contains "Assigned #999 to bob@example.com"
-    [[ "${captured_id}" == "999" ]] || { echo "task not picked: ${captured_id}"; return 1; }
-    [[ "${captured_user}" == "bob@example.com" ]] || { echo "user not picked: ${captured_user}"; return 1; }
+    [[ "$(cat "${cap_id}" 2>/dev/null)" == "999" ]] || { echo "task not picked: $(cat "${cap_id}" 2>/dev/null)"; return 1; }
+    [[ "$(cat "${cap_user}" 2>/dev/null)" == "bob@example.com" ]] || { echo "user not picked: $(cat "${cap_user}" 2>/dev/null)"; return 1; }
 }
 
 @test "cmd_assign: aborts when user picker returns non-zero (user cancelled)" {
@@ -1060,10 +1078,9 @@ setup() {
 @test "cmd_assign --me: assigns to the authenticated user from connectionData" {
     twk_write_fake_config
 
-    local captured_id="" captured_user=""
+    local cap_user="${BATS_TEST_TMPDIR}/assign_user"
     azdo_update_assigned_to() {
-        captured_id="$1"
-        captured_user="$2"
+        printf '%s' "$2" > "${cap_user}"
         return 0
     }
     resolve_self() { echo "me@example.com"; }
@@ -1073,7 +1090,7 @@ setup() {
     run cmd_assign 12345 --me
     assert_status 0
     assert_output_contains "Assigned #12345 to me@example.com"
-    [[ "${captured_user}" == "me@example.com" ]] || { echo "got user: ${captured_user}"; return 1; }
+    [[ "$(cat "${cap_user}" 2>/dev/null)" == "me@example.com" ]] || { echo "got user: $(cat "${cap_user}" 2>/dev/null)"; return 1; }
     [[ "${output}" != *"PICKER MUST NOT FIRE"* ]] || { echo "user picker fired despite --me"; return 1; }
 }
 
@@ -1104,31 +1121,31 @@ setup() {
 @test "cmd_assign --all: passes 'org' scope to the user picker" {
     twk_write_fake_config
 
-    local captured_scope=""
+    local cap_scope="${BATS_TEST_TMPDIR}/picker_scope"
     resolve_user_interactive() {
-        captured_scope="$1"
+        printf '%s' "$1" > "${cap_scope}"
         echo "alice@example.com"
     }
     azdo_update_assigned_to() { return 0; }
 
     run cmd_assign 12345 --all
     assert_status 0
-    [[ "${captured_scope}" == "org" ]] || { echo "got scope: ${captured_scope}"; return 1; }
+    [[ "$(cat "${cap_scope}" 2>/dev/null)" == "org" ]] || { echo "got scope: $(cat "${cap_scope}" 2>/dev/null)"; return 1; }
 }
 
 @test "cmd_assign without --all defaults to 'sprint' scope on the picker" {
     twk_write_fake_config
 
-    local captured_scope=""
+    local cap_scope="${BATS_TEST_TMPDIR}/picker_scope"
     resolve_user_interactive() {
-        captured_scope="$1"
+        printf '%s' "$1" > "${cap_scope}"
         echo "alice@example.com"
     }
     azdo_update_assigned_to() { return 0; }
 
     run cmd_assign 12345
     assert_status 0
-    [[ "${captured_scope}" == "sprint" ]] || { echo "got scope: ${captured_scope}"; return 1; }
+    [[ "$(cat "${cap_scope}" 2>/dev/null)" == "sprint" ]] || { echo "got scope: $(cat "${cap_scope}" 2>/dev/null)"; return 1; }
 }
 
 @test "cmd_assign: reports failure when AzDO PATCH fails" {

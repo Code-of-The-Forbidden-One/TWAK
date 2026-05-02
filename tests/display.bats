@@ -1101,17 +1101,21 @@ EOF
     require_binary jq
     twk_write_fake_config
 
-    local captured_id="" captured_text=""
+    # Capture POST args via tmpfiles so the subshell mutations under `run`
+    # survive into the parent test scope.
+    local cap_id="${BATS_TEST_TMPDIR}/post_id"
+    local cap_text="${BATS_TEST_TMPDIR}/post_text"
     azdo_post_comment() {
-        captured_id="$1"
-        captured_text="$2"
+        printf '%s' "$1" > "${cap_id}"
+        printf '%s' "$2" > "${cap_text}"
         printf '%s' '{"id":99,"text":"hello","createdDate":"2026-05-02T10:42:00Z"}'
     }
 
     run cmd_comment 12345 "hello world"
     assert_status 0
-    [[ "${captured_id}" == "12345" ]] || { echo "got id: ${captured_id}"; return 1; }
-    [[ "${captured_text}" == "hello world" ]] || { echo "got text: ${captured_text}"; return 1; }
+    [[ -f "${cap_id}" ]] || { echo "azdo_post_comment was not called"; return 1; }
+    [[ "$(cat "${cap_id}")" == "12345" ]] || { echo "got id: $(cat "${cap_id}")"; return 1; }
+    [[ "$(cat "${cap_text}")" == "hello world" ]] || { echo "got text: $(cat "${cap_text}")"; return 1; }
     assert_output_contains "Posted comment on #12345 at 2026-05-02 10:42"
     # Body echoed back, indented.
     assert_output_contains "  hello world"
@@ -1121,11 +1125,10 @@ EOF
     require_binary jq
     twk_write_fake_config
 
-    local captured_text=""
-    azdo_post_comment() {
-        captured_text="$2"
-        printf '%s' '{"id":1,"createdDate":"2026-05-02T10:00:00Z"}'
-    }
+    # The mock captures the body to a file because (a) `run` uses a subshell
+    # so local-var captures don't survive, and (b) cmd_comment grabs stdout
+    # via $(...) so anything the mock echoes never reaches the test output.
+    local cap_text="${BATS_TEST_TMPDIR}/post_text"
 
     # Bats: pass stdin via run by invoking through bash -c.
     run bash -c "
@@ -1136,12 +1139,12 @@ EOF
         source '${TWK_REPO}/lib/display.sh'
         export TWK_DATA_DIR='${TWK_DATA_DIR}'
         export TWK_CONFIG_DIR='${TWK_CONFIG_DIR}'
-        # Replicate the test mock.
-        azdo_post_comment() { echo \"got: \$2\"; printf '%s' '{\"createdDate\":\"2026-05-02T10:00:00Z\"}'; }
+        azdo_post_comment() { printf '%s' \"\$2\" > '${cap_text}'; printf '%s' '{\"createdDate\":\"2026-05-02T10:00:00Z\"}'; }
         printf 'piped content here\n' | cmd_comment 12345 -
     "
     assert_status 0
-    assert_output_contains "got: piped content here"
+    [[ -f "${cap_text}" ]] || { echo "azdo_post_comment was not called"; return 1; }
+    [[ "$(cat "${cap_text}")" == "piped content here" ]] || { echo "got: $(cat "${cap_text}")"; return 1; }
     assert_output_contains "Posted comment on #12345"
 }
 
@@ -1341,7 +1344,7 @@ EOF
 
     run cmd_users surplus
     assert_status 1
-    assert_output_contains "takes no arguments"
+    assert_output_contains "unknown argument 'surplus'"
     assert_output_contains "Usage: twk users"
 }
 
@@ -1541,7 +1544,7 @@ EOF
     assert_status 0
     assert_output_contains "DRY RUN"
     assert_output_contains "would commit"
-    assert_output_contains "existing 2.5h"
+    assert_output_contains "existing 2.50h"
     assert_output_contains "#100"
     # Running session skipped with the same message as the real path.
     assert_output_contains "#200: skipped (still running"
@@ -1602,7 +1605,7 @@ EOF
     assert_status 0
     # 2h tracked + 1h existing = 3.00h total. Dry-run "would commit" reports tracked hours.
     assert_output_contains "would commit 2.00h"
-    assert_output_contains "existing 1.0h"
+    assert_output_contains "existing 1.00h"
     assert_output_contains "total 3.00h"
     # Summary shows 2h to be committed across 1 session.
     assert_output_contains "Would commit 2.00h across 1 session"

@@ -744,9 +744,10 @@ cmd_log() {
         cutoff=$(( $(date +%s) - days * 86400 ))
     fi
 
-    # Collect TSV rows: date<TAB>id<TAB>elapsed_seconds<TAB>title
+    # Collect TSV rows: datetime<TAB>id<TAB>elapsed_seconds<TAB>title
+    # datetime format: "YYYY-MM-DD HH:MM" (sorts naturally lexically).
     local rows=""
-    local f fname id ts elapsed_seconds date_str title meta_file
+    local f fname id ts elapsed_seconds datetime_str title meta_file
     for f in "${committed_dir}"/*.session; do
         [[ -f "${f}" ]] || continue
         fname="$(basename "${f}" .session)"
@@ -762,7 +763,7 @@ cmd_log() {
         fi
 
         elapsed_seconds="$(session_elapsed_from_path "${f}")"
-        date_str="$(date -d "@${ts}" +%Y-%m-%d 2>/dev/null || echo "?")"
+        datetime_str="$(date -d "@${ts}" +"%Y-%m-%d %H:%M" 2>/dev/null || echo "?")"
 
         title=""
         meta_file="${committed_dir}/${id}_${ts}.meta"
@@ -771,7 +772,7 @@ cmd_log() {
         fi
         [[ -z "${title}" ]] && title="(no title cached)"
 
-        rows+="${date_str}"$'\t'"${id}"$'\t'"${elapsed_seconds}"$'\t'"${title}"$'\n'
+        rows+="${datetime_str}"$'\t'"${id}"$'\t'"${elapsed_seconds}"$'\t'"${title}"$'\n'
     done
 
     if [[ -z "${rows}" ]]; then
@@ -789,12 +790,12 @@ cmd_log() {
         local sorted
 
         if [[ "${by_id}" == true ]]; then
-            # Group by id (numeric asc), within group date desc.
+            # Group by id (numeric asc), within group datetime desc.
             sorted="$(printf '%s' "${rows}" | sort -t$'\t' -k2,2n -k1,1r)"
 
-            local last_id="" id_subtotal=0 row_id row_date row_elapsed row_title
-            while IFS=$'\t' read -r row_date row_id row_elapsed row_title; do
-                [[ -z "${row_date}" ]] && continue
+            local last_id="" id_subtotal=0 row_id row_datetime row_elapsed row_title
+            while IFS=$'\t' read -r row_datetime row_id row_elapsed row_title; do
+                [[ -z "${row_datetime}" ]] && continue
                 if [[ "${row_id}" != "${last_id}" ]]; then
                     if [[ -n "${last_id}" ]]; then
                         printf "  Subtotal: %sh\n\n" "$(seconds_to_hours "${id_subtotal}")"
@@ -803,7 +804,8 @@ cmd_log() {
                     printf "#%s  %s\n" "${row_id}" "${row_title}"
                     last_id="${row_id}"
                 fi
-                printf "  %s  %sh\n" "${row_date}" "$(seconds_to_hours "${row_elapsed}")"
+                # Full datetime per row (e.g. "2026-05-02 14:22  3.38h").
+                printf "  %s  %sh\n" "${row_datetime}" "$(seconds_to_hours "${row_elapsed}")"
                 id_subtotal=$(( id_subtotal + row_elapsed ))
                 total_seconds=$(( total_seconds + row_elapsed ))
                 count=$(( count + 1 ))
@@ -812,18 +814,23 @@ cmd_log() {
                 printf "  Subtotal: %sh\n" "$(seconds_to_hours "${id_subtotal}")"
             fi
         else
-            # Group by date (desc), within day id asc.
+            # Group by date (desc), within day datetime desc (newer commits
+            # first within the same day), tie-break by id asc.
             sorted="$(printf '%s' "${rows}" | sort -t$'\t' -k1,1r -k2,2n)"
 
-            local last_date="" row_id row_date row_elapsed row_title
-            while IFS=$'\t' read -r row_date row_id row_elapsed row_title; do
-                [[ -z "${row_date}" ]] && continue
+            local last_date="" row_id row_datetime row_date row_time row_elapsed row_title
+            while IFS=$'\t' read -r row_datetime row_id row_elapsed row_title; do
+                [[ -z "${row_datetime}" ]] && continue
+                # Split datetime into date (group key) and time (column on each row).
+                row_date="${row_datetime%% *}"
+                row_time="${row_datetime#* }"
                 if [[ "${row_date}" != "${last_date}" ]]; then
                     [[ -n "${last_date}" ]] && echo ""
                     printf "%s\n" "${row_date}"
                     last_date="${row_date}"
                 fi
-                printf "  #%-7s %-40s %sh\n" \
+                printf "  %s  #%-7s %-40s %sh\n" \
+                    "${row_time}" \
                     "${row_id}" \
                     "$(truncate_title "${row_title}")" \
                     "$(seconds_to_hours "${row_elapsed}")"

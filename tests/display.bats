@@ -1817,6 +1817,55 @@ EOF
     assert_output_contains "across 1 session"
 }
 
+@test "cmd_log: default rows lead with commit time as HH:MM" {
+    require_binary jq
+    require_binary bc
+    mkdir -p "${TWK_DATA_DIR}/committed"
+
+    local now
+    now=$(( $(date +%s) - 100 ))
+    {
+        echo "start|$((now - 3600))"
+        echo "end|${now}"
+    } > "${TWK_DATA_DIR}/committed/100_${now}.session"
+    printf '%s' '{"title":"With time","type":"Task"}' > "${TWK_DATA_DIR}/committed/100_${now}.meta"
+
+    run cmd_log --all
+    assert_status 0
+    # The expected HH:MM that should appear on the row.
+    local expected_time
+    expected_time="$(date -d "@${now}" +%H:%M)"
+    assert_output_contains "${expected_time}"
+    # Time should appear before the ID on the same row.
+    local time_col_line
+    time_col_line="$(grep -F "${expected_time}" <<< "${output}" | grep -F "#100" | head -1)"
+    [[ -n "${time_col_line}" ]] || { echo "no row contains both time and #100"; return 1; }
+    # The HH:MM should appear before the #ID.
+    local time_pos id_pos
+    time_pos="$(awk -v s="${expected_time}" '{print index($0, s); exit}' <<< "${time_col_line}")"
+    id_pos="$(awk '{print index($0, "#100"); exit}' <<< "${time_col_line}")"
+    [[ "${time_pos}" -lt "${id_pos}" ]] || { echo "time should precede ID on the row: ${time_col_line}"; return 1; }
+}
+
+@test "cmd_log --by-id: shows full 'YYYY-MM-DD HH:MM' on each entry" {
+    require_binary jq
+    require_binary bc
+    mkdir -p "${TWK_DATA_DIR}/committed"
+
+    local now
+    now=$(( $(date +%s) - 100 ))
+    {
+        echo "start|$((now - 3600))"
+        echo "end|${now}"
+    } > "${TWK_DATA_DIR}/committed/100_${now}.session"
+
+    run cmd_log --by-id --all
+    assert_status 0
+    local expected_dt
+    expected_dt="$(date -d "@${now}" +"%Y-%m-%d %H:%M")"
+    assert_output_contains "${expected_dt}"
+}
+
 @test "cmd_log --by-id: trailing 'session' uses singular for one entry" {
     require_binary jq
     require_binary bc

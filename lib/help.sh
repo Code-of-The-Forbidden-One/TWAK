@@ -501,26 +501,26 @@ chronological view of what you've pushed to AzDO.
 Local-only: hits no network, ignores PAT and config. Output is
 piped through 'less -FRX' when stdout is a TTY.
 
-Default layout (newest day first):
+Default layout (newest day first; commit time on each row):
 
     2026-05-02
-      #48210  Implement login button                   3.38h
-      #48215  Refactor auth middleware                 0.75h
+      14:22  #48210  Implement login button                   3.38h
+      10:15  #48215  Refactor auth middleware                 0.75h
 
     2026-05-01
-      #48210  Implement login button                   2.20h
+      17:43  #48210  Implement login button                   2.20h
 
     Total: 6.33h across 3 sessions.
 
-With --by-id (per-item subtotals):
+With --by-id (full datetime per entry, per-item subtotals):
 
     #48210  Implement login button
-      2026-05-02  3.38h
-      2026-05-01  2.20h
+      2026-05-02 14:22  3.38h
+      2026-05-01 17:43  2.20h
       Subtotal: 5.58h
 
     #48215  Refactor auth middleware
-      2026-05-02  0.75h
+      2026-05-02 10:15  0.75h
       Subtotal: 0.75h
 
     Total: 6.33h across 3 sessions.

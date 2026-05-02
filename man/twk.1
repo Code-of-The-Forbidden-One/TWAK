@@ -368,8 +368,14 @@ Group entries are filtered out — only individual users appear.
 Browse the history of committed time entries. Reads
 .I ~/.local/share/twk/sessions/committed/
 and renders a chronological view (default: last 7 days, grouped
-by date with newest first). Each session's commit timestamp
-comes from its archived filename; titles come from the
+by date with newest first; each row leads with the commit time as
+.IR HH:MM ).
+With
+.BR \-\-by-id ,
+each entry shows the full datetime
+.RI ( "YYYY-MM-DD HH:MM" )
+inline. Commit timestamps come from the archived filename; titles
+come from the
 .I .meta
 sidecar (when present, otherwise
 .I "(no title cached)" ).

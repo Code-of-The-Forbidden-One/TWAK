@@ -666,19 +666,19 @@ Browses the history of committed time entries. Reads `~/.local/share/twk/session
 
 **Local-only.** Hits no network, ignores PAT and config. Output auto-pages through `less -FRX` when long.
 
-**Defaults to the last 7 days, grouped by date.** Newest day first; within each day, items sort by ID ascending.
+**Defaults to the last 7 days, grouped by date.** Newest day first; within each day, commits sort newest-first by time, with ID as a tiebreaker. Each row leads with the commit time as `HH:MM`.
 
 ```
 $ twk log
 2026-05-02
-  #48210   Implement login button                   3.38h
-  #48215   Refactor auth middleware                 0.75h
+  14:22  #48210   Implement login button                   3.38h
+  10:15  #48215   Refactor auth middleware                 0.75h
 
 2026-05-01
-  #48210   Implement login button                   2.20h
+  17:43  #48210   Implement login button                   2.20h
 
 2026-04-30
-  #48205   Audit login bug                          1.10h
+  09:08  #48205   Audit login bug                          1.10h
 
 Total: 7.43h across 4 sessions.
 ```
@@ -691,21 +691,21 @@ $ twk log --days=1         # just today (ish — 24h window from now)
 $ twk log --all            # everything ever
 ```
 
-**`--by-id`** groups by work item ID with per-item subtotals — useful for "how much have I spent on #48210 across the project?":
+**`--by-id`** groups by work item ID with per-item subtotals — useful for "how much have I spent on #48210 across the project?". Each entry shows the full datetime inline:
 
 ```
 $ twk log --by-id --days=14
 #48210  Implement login button
-  2026-05-02  3.38h
-  2026-05-01  2.20h
+  2026-05-02 14:22  3.38h
+  2026-05-01 17:43  2.20h
   Subtotal: 5.58h
 
 #48215  Refactor auth middleware
-  2026-05-02  0.75h
+  2026-05-02 10:15  0.75h
   Subtotal: 0.75h
 
 #48205  Audit login bug
-  2026-04-30  1.10h
+  2026-04-30 09:08  1.10h
   Subtotal: 1.10h
 
 Total: 7.43h across 4 sessions.

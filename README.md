@@ -937,6 +937,21 @@ After setup, you can use `twk` from any WSL terminal. If you use Windows Termina
   wsl twk status
   wsl twk start 12345
   ```
+- **Native-feel `twk` from PowerShell (recommended for Windows users)** — add a one-line function to your PowerShell profile so you can drop the `wsl` prefix entirely. In PowerShell:
+  ```powershell
+  notepad $PROFILE
+  ```
+  Append this and save:
+  ```powershell
+  function twk { wsl twk @args }
+  ```
+  New PowerShell sessions now treat `twk` as if it were a native Windows command:
+  ```powershell
+  PS> twk start 12345
+  PS> twk status
+  PS> twk commit
+  ```
+  The `@args` splat preserves spaces and quoting, so things like `twk start "auth refactor"` work naturally. Quoting follows PowerShell rules on the way in and Bash rules on the way to twk — the WSL boundary handles the conversion.
 - **Optional: fzf for interactive picking** - `sudo apt install -y fzf` enables the fuzzy finder for `twk start` without arguments.
 
 ---

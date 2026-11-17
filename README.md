@@ -96,7 +96,7 @@ twk has two distinct ways of writing to Azure DevOps. Knowing which is which avo
 |---|---|---|
 | **Commit cycle (deferred)** | `start`, `pause`, `end`, `undo`, `cancel`, `adjust`, `add`, `status`, `commit` | `start`/`pause`/`end`/`undo`/`cancel`/`adjust`/`add` only touch local session files. AzDO is contacted **only** on `twk commit`, which pushes the accumulated hours in one go. |
 | **Immediate AzDO actions** | `done`, `assign`, `comment`, `reset` | PATCH/POST to AzDO **as soon as you invoke them**. No staging, no `commit`, no twk-side undo — fix via the AzDO web UI or by re-running with different arguments. `reset` is destructive (wipes the time field) so it confirms by default. |
-| **Immediate (alongside session change)** | `--state X` flag on any time-tracking command | Fires an immediate state PATCH on top of the local session change. The session part still goes through the commit cycle; the state change does not. |
+| **Immediate (alongside session change)** | A state change on a time-tracking command: `--state X`, `twk end --done`, or a start/pause state set in `twk init` | Fires an immediate state PATCH on top of the local session change. The session part still goes through the commit cycle; the state change does not. |
 | **Read-only / local** | `list`, `show`, `users`, `log`, `pull`, `doctor`, `init` and `trust` (write local config), `version`, `help` | No writes to AzDO state. `list`/`show`/`users` read from AzDO; `doctor` checks the connection. `pull` reads from AzDO and writes only to your local meta cache. `log` reads only the local committed/ archive — no network. `status` is local-only by default; with `--with-existing` it reads from AzDO. |
 
 The commit cycle is the safe, iterable flow — track time offline, review with `status`, fix with `undo`/`cancel`, push when ready. The immediate flow is for things that don't have a meaningful "draft" stage (a state change, an assignment).
@@ -124,8 +124,9 @@ You will be prompted for:
 - **Personal Access Token** (only for `pat`) - a PAT with **Work Items (Read & Write)** scope
 - **Time field for Tasks** - the AzDO field name to write time to for tasks (e.g. `Custom.TimeSpent`, `Microsoft.VSTS.Scheduling.CompletedWork`)
 - **Time field for Features** - the AzDO field name for features, or leave blank if the same as tasks
-- **State for start** and **State for pause** (defaults `Active` and `Paused`) - saved in the config, but not used yet: `start`, `pause`, and `end` change a work item's state only when you pass `--state <state>`
-- **State for `twk done`** - the state `twk done` sets when you don't pass `--state` (default: `Done`)
+- **State when you start an item** (optional) - a board state such as `Active`, `Doing`, or `In Progress`. If set, `twk start` moves the work item there. Leave blank to leave the state alone.
+- **State when you pause an item** (optional) - likewise for `twk pause`. Leave blank unless your board has a state for paused work.
+- **State for `twk done` and `twk end --done`** (default: `Done`)
 
 Configuration is stored at `.twk/config` (local) or `~/.config/twk/config` (global) with restrictive file permissions (`600`) and directory permissions (`700`).
 
@@ -161,13 +162,14 @@ Common values: Microsoft.VSTS.Scheduling.CompletedWork, Custom.TimeSpent
 Time field for Tasks (e.g. Custom.TimeSpent): Custom.TimeSpent
 Time field for Features (leave blank if same as Tasks):
 
-Work item states
-Your board's state names. 'twk done' sets the done state; start, pause
-and end change state only when you pass --state <state>.
+Work item states (optional)
+twk can move a work item on your board when you start or pause it.
+Use your board's state names (e.g. Active, Doing, In Progress).
+Leave blank to leave the state alone.
 
-State for start (default: Active): Doing
-State for pause (default: Paused):
-State for 'twk done' (default: Done):
+State when you start an item (blank: don't change): Doing
+State when you pause an item (blank: don't change):
+State for 'twk done' and 'twk end --done' (default: Done):
 
 Configuration saved to /home/user/Projects/Platform/.twk/config (local scope)
 
@@ -272,12 +274,15 @@ If the work item is currently paused, `twk start` resumes it automatically.
 
 The interactive picker hides items that already have a running session (you can't start them again). Items with a **paused** session show `paused HH:MM:SS` to the right of the title so you can see how much time is already on them before resuming. The AzDO assignee (display name) is shown in a column at the end of each row so you can tell at a glance who currently owns what. Titles are truncated to 40 characters and assignee names to 15 characters, both with `...`. A short note like `(2 running sessions hidden)` is printed before the picker so you know what's been filtered out.
 
-Use `--state` to update the work item state in Azure DevOps (e.g. `--state Doing`).
+If you set a start state in `twk init`, the work item moves to it on the board each time you start (or resume) it. `--state <state>` uses a different state this once, and `--no-state` leaves the state alone.
 
 ```
-$ twk start "auth refactor" --state Doing
+$ twk start "auth refactor"
 Started tracking #48210
   State set to Doing
+
+$ twk start 48215 --no-state
+Started tracking #48215
 
 $ twk start 48210
 Error: work item #48210 is already running.
@@ -289,14 +294,14 @@ Error: work item #48210 is already running.
 
 Pauses an active timing session. The elapsed time so far is preserved - you can resume with `twk start` at any point.
 
-Use `--state` to update the work item state in Azure DevOps (e.g. `--state Paused`).
+If you set a pause state in `twk init`, the work item moves to it when you pause. `--state <state>` uses a different state this once, and `--no-state` leaves the state alone.
 
 The same task resolution modes apply (ID, title match, or interactive). When you omit the task, the interactive picker only lists currently **running** sessions rather than the full sprint - so you don't have to guess which work item still has a live timer. If only one session is running, it's selected automatically.
 
 ```
-$ twk pause 48210 --state Paused
+$ twk pause 48210 --state Blocked
 Paused #48210 (01:34:12 tracked)
-  State set to Paused
+  State set to Blocked
 ```
 
 ---
@@ -305,7 +310,7 @@ Paused #48210 (01:34:12 tracked)
 
 Ends a timing session on a work item. The session is finalised and ready to commit.
 
-You can end a work item that is either running or paused. By default, ending a session does not change the work item state. Use `--state` to set the state explicitly.
+You can end a work item that is either running or paused. By default, ending a session does not change the work item state: ending your time on something doesn't mean it is finished. Pass `--done` to also mark it done (the done state from `twk init`), or `--state <state>` for any other state.
 
 When the task is omitted, the interactive picker only lists **running or paused** sessions. Already-ended sessions and the rest of the sprint are excluded. A single match auto-selects.
 
@@ -313,7 +318,7 @@ When the task is omitted, the interactive picker only lists **running or paused*
 $ twk end 48210
 Ended #48210 (03:22:45 total)
 
-$ twk end 48215 --state Done
+$ twk end 48215 --done
 Ended #48215 (01:15:30 total)
   State set to Done
 
@@ -997,6 +1002,8 @@ Arguments:
 Options:
     --global             (init only) Write to the global config rather than project-local
     --state <state>      (start, pause, end, done, undo, cancel) Set AzDO work item state
+    --no-state           (start, pause) Don't apply the state set in 'twk init'
+    --done               (end) Also set the done state from 'twk init'
     --with-existing      (status only) Show post-commit projection (existing AzDO + tracked)
     -i, --interactive    (list only) Open in fzf with preview pane; prints selected ID
     --sort=<col>         (list only) Sort by column (id, title, state, pri, est, done,
@@ -1010,7 +1017,8 @@ Options:
     --days=<n>           (log only) Limit history to the last N days (default 7)
     --by-id              (log only) Group history by work item ID instead of date
 
-Note: --state X on any time-tracking command also fires an immediate PATCH to AzDO.
+Note: a state change (--state, --done, or one set in 'twk init' for start and
+pause) is sent to AzDO immediately; the time still waits for 'twk commit'.
 
 Pass --help (or -h) to any subcommand for full per-command help.
 
@@ -1120,7 +1128,7 @@ TWAK/
 │   └── twk.1            # Man page
 ├── tests/
 │   ├── *.bats           # bats-core test suite (one file per lib/*.sh, plus
-│   │                    #   security.bats and commit_safety.bats)
+│   │                    #   security, commit_safety and states .bats)
 │   ├── helpers/         # Shared setup, AzDO mocks, jq fallback stub
 │   ├── run.sh           # Test runner wrapper
 │   └── README.md        # How to run the tests
@@ -1205,7 +1213,7 @@ Generate a PAT at: `https://dev.azure.com/{your-org}/_usersettings/tokens`. If y
 |---------------------------------------------------|--------------------------------------------------------------|
 | `System.Id`, `System.Title`                       | Identification, title search, and display                    |
 | `System.WorkItemType`                             | Display; chooses the Task or Feature time field              |
-| `System.State`                                    | Display; written by `twk done` and by `--state` on any time-tracking command |
+| `System.State`                                    | Display; written by `twk done`, `twk end --done`, `--state`, and the start/pause states set in `twk init` |
 | `System.AssignedTo`                               | Display and the sprint user picker; written by `twk assign`  |
 | `System.Description`, `System.IterationPath`      | Shown by `twk list` and `twk show`                           |
 | `Microsoft.VSTS.Common.Priority`                  | Shown and sortable in `twk list`                             |

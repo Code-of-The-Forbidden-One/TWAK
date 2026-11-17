@@ -88,11 +88,12 @@ tests/
                        credential handling, retries, errors, response sanitising
   commit_safety.bats   commit never overwrites unread hours, revision checks, recovery
                        of unknown outcomes, `twk add`, session locking, `twk doctor`
+  states.bats          board state moves on start/pause, --state, --no-state, end --done
   run.sh               wrapper script
 ```
 
 One `*.bats` per `lib/*.sh`, plus `integration.bats`, `twk_dispatch.bats`,
-`security.bats`, and `commit_safety.bats`.
+`security.bats`, `commit_safety.bats`, and `states.bats`.
 
 ## Mocking strategy
 

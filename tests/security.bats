@@ -123,8 +123,8 @@ _curl_calls() {
     [[ "${TWK_PROJECT}" == "Project 'X' \"Y\"" ]] || { echo "project: ${TWK_PROJECT}"; return 1; }
     [[ "${TWK_TEAM}" == "Team & Co" ]] || { echo "team: ${TWK_TEAM}"; return 1; }
     [[ "${TWK_PAT}" == "p@t\$1" ]] || { echo "pat: ${TWK_PAT}"; return 1; }
-    [[ "${TWK_STATE_ACTIVE}" == "In Progress" ]]
-    [[ "${TWK_STATE_PAUSED}" == "" ]]
+    [[ "${TWK_STATE_ON_START}" == "In Progress" ]]
+    [[ "${TWK_STATE_ON_PAUSE}" == "" ]]
     [[ "${TWK_STATE_DONE}" == "Done; rm -rf" ]]
     [[ "${TWK_AUTH}" == "azcli" ]]
 }

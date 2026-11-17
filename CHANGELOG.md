@@ -9,6 +9,7 @@ A security and correctness release. Upgrade before sharing twk with anyone.
 - **Trust your local configs once.** twk now uses a project-local `.twk/config` only if `twk init` wrote it or you have approved it. In each project with an existing `.twk/config`, review the file and run `twk trust`. Global configs need nothing.
 - **Sessions move per organisation and project.** The first command you run moves your uncommitted sessions and history from `~/.local/share/twk/sessions/` into `~/.local/share/twk/scopes/<organisation>/<project>/` for the config in use, and says so. If you track time in more than one organisation, check `twk status` afterwards and `twk cancel` anything that belongs elsewhere.
 - **`bc` is no longer needed.**
+- **Board states are opt-in.** To have `twk start` and `twk pause` move work items on your board, re-run `twk init` (or add `TWK_STATE_ON_START=<state>` and `TWK_STATE_ON_PAUSE=<state>` to your config).
 
 ### Security
 
@@ -34,6 +35,8 @@ A security and correctness release. Upgrade before sharing twk with anyone.
 
 ### New
 
+- **Move work items on the board as you work.** `twk init` asks, optionally, for a state to move a work item to when you start it and when you pause it (`TWK_STATE_ON_START`, `TWK_STATE_ON_PAUSE`). `--state <state>` overrides it once and `--no-state` skips it. Configs from 0.1.x are unaffected: their `TWK_STATE_ACTIVE`/`TWK_STATE_PAUSED` values were never used and still aren't; re-run `twk init` to choose states.
+- `twk end --done` ends the session and marks the work item done in one step.
 - `twk add [task] <duration>` adds time you forgot to track.
 - `twk doctor` shows the config in use, whether it is trusted, its settings, where sessions are kept, and whether Azure DevOps can be reached.
 - `twk trust` approves a project-local config after you have reviewed it.

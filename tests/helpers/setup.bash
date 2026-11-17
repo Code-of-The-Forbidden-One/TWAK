@@ -57,7 +57,8 @@ twk_setup_env() {
     # twk_write_fake_config or set TWK_* directly.
     unset TWK_ORGANIZATION TWK_PROJECT TWK_TEAM TWK_PAT \
           TWK_TIME_FIELD_TASK TWK_TIME_FIELD_FEATURE \
-          TWK_STATE_ACTIVE TWK_STATE_PAUSED TWK_STATE_DONE
+          TWK_STATE_ACTIVE TWK_STATE_PAUSED TWK_STATE_DONE \
+          TWK_STATE_ON_START TWK_STATE_ON_PAUSE TWK_AUTH
 
     twk_hide_fzf
 }

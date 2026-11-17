@@ -494,8 +494,8 @@ _install_cmd_init_mocks() {
 
     # Fed prompts in order:
     #   organisation, project, team (blank ok), auth (pat), pat, time_field_task,
-    #   time_field_feature (blank → defaults to task), state_active,
-    #   state_paused, state_done.
+    #   time_field_feature (blank → defaults to task), state_on_start,
+    #   state_on_pause, state_done.
     cmd_init --global <<'EOF'
 myorg
 MyProject
@@ -520,8 +520,8 @@ EOF
     pat="$(bash -c "set -e; source '${config_file}'; printf '%s' \"\${TWK_PAT}\"")"
     tf_task="$(bash -c "set -e; source '${config_file}'; printf '%s' \"\${TWK_TIME_FIELD_TASK}\"")"
     tf_feature="$(bash -c "set -e; source '${config_file}'; printf '%s' \"\${TWK_TIME_FIELD_FEATURE}\"")"
-    s_active="$(bash -c "set -e; source '${config_file}'; printf '%s' \"\${TWK_STATE_ACTIVE}\"")"
-    s_paused="$(bash -c "set -e; source '${config_file}'; printf '%s' \"\${TWK_STATE_PAUSED}\"")"
+    s_active="$(bash -c "set -e; source '${config_file}'; printf '%s' \"\${TWK_STATE_ON_START}\"")"
+    s_paused="$(bash -c "set -e; source '${config_file}'; printf '%s' \"\${TWK_STATE_ON_PAUSE}\"")"
     s_done="$(bash -c "set -e; source '${config_file}'; printf '%s' \"\${TWK_STATE_DONE}\"")"
 
     [[ "${org}" == "myorg" ]]            || { echo "org=${org}" >&2; return 1; }
@@ -536,7 +536,7 @@ EOF
     [[ "${s_done}" == "Done" ]]          || { echo "s_done=${s_done}" >&2; return 1; }
 }
 
-@test "cmd_init --global: empty state prompts fall back to default Active/Paused/Done" {
+@test "cmd_init --global: empty state prompts mean no start/pause move, and Done" {
     _install_cmd_init_mocks
     config_find_local() { return 1; }
 
@@ -558,12 +558,12 @@ EOF
     assert_file_exists "${config_file}"
 
     local s_active s_paused s_done
-    s_active="$(bash -c "set -e; source '${config_file}'; printf '%s' \"\${TWK_STATE_ACTIVE}\"")"
-    s_paused="$(bash -c "set -e; source '${config_file}'; printf '%s' \"\${TWK_STATE_PAUSED}\"")"
+    s_active="$(bash -c "set -e; source '${config_file}'; printf '%s' \"\${TWK_STATE_ON_START}\"")"
+    s_paused="$(bash -c "set -e; source '${config_file}'; printf '%s' \"\${TWK_STATE_ON_PAUSE}\"")"
     s_done="$(bash -c "set -e; source '${config_file}'; printf '%s' \"\${TWK_STATE_DONE}\"")"
 
-    [[ "${s_active}" == "Active" ]]
-    [[ "${s_paused}" == "Paused" ]]
+    [[ -z "${s_active}" ]] || { echo "s_active=${s_active}" >&2; return 1; }
+    [[ -z "${s_paused}" ]] || { echo "s_paused=${s_paused}" >&2; return 1; }
     [[ "${s_done}" == "Done" ]]
 }
 

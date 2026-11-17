@@ -341,17 +341,56 @@ parse_state_flag() {
     done
 }
 
+parse_has_flag() {
+    # True if <flag> appears in the remaining arguments.
+    local flag="$1"
+    shift
+    local arg
+    for arg in "$@"; do
+        [[ "${arg}" == "${flag}" ]] && return 0
+    done
+    return 1
+}
+
 parse_query_arg() {
+    # The first argument that is not a state option (or --state's value).
     local args=("$@")
     local i
     for (( i=0; i<${#args[@]}; i++ )); do
-        if [[ "${args[i]}" == "--state" ]]; then
-            i=$(( i + 1 ))
-            continue
-        fi
+        case "${args[i]}" in
+            --state)
+                i=$(( i + 1 ))
+                continue
+                ;;
+            --no-state|--done)
+                continue
+                ;;
+        esac
         echo "${args[i]}"
         return
     done
+}
+
+resolve_target_state() {
+    # Prints the state a command should move its work item to, or nothing.
+    #   --state <s>   that state, always
+    #   --no-state    no change, even if the config names one
+    #   --done        the configured done state (TWK_STATE_DONE)
+    #   otherwise     <default>: the configured state for this action
+    local default="$1"
+    shift
+
+    local explicit
+    explicit="$(parse_state_flag "$@")"
+    if [[ -n "${explicit}" ]]; then
+        echo "${explicit}"
+    elif parse_has_flag --no-state "$@"; then
+        return
+    elif parse_has_flag --done "$@"; then
+        echo "${TWK_STATE_DONE:-Done}"
+    else
+        echo "${default}"
+    fi
 }
 
 apply_state_change() {
@@ -394,7 +433,7 @@ cmd_start() {
     local query
     query="$(parse_query_arg "$@")"
     local target_state
-    target_state="$(parse_state_flag "$@")"
+    target_state="$(resolve_target_state "${TWK_STATE_ON_START:-}" "$@")"
 
     local work_item_id
     work_item_id="$(resolve_work_item "${query}")" || return 1
@@ -430,7 +469,7 @@ cmd_pause() {
     local query
     query="$(parse_query_arg "$@")"
     local target_state
-    target_state="$(parse_state_flag "$@")"
+    target_state="$(resolve_target_state "${TWK_STATE_ON_PAUSE:-}" "$@")"
 
     local work_item_id
     work_item_id="$(resolve_for_session_action "${query}" "${STATE_RUNNING}" "pause")" || return 1
@@ -468,7 +507,7 @@ cmd_end() {
     local query
     query="$(parse_query_arg "$@")"
     local target_state
-    target_state="$(parse_state_flag "$@")"
+    target_state="$(resolve_target_state "" "$@")"
 
     local work_item_id
     work_item_id="$(resolve_for_session_action "${query}" "${STATE_RUNNING}|${STATE_PAUSED}" "end")" || return 1
@@ -483,11 +522,7 @@ cmd_done() {
     local query
     query="$(parse_query_arg "$@")"
     local target_state
-    target_state="$(parse_state_flag "$@")"
-
-    if [[ -z "${target_state}" ]]; then
-        target_state="${TWK_STATE_DONE}"
-    fi
+    target_state="$(resolve_target_state "${TWK_STATE_DONE:-Done}" "$@")"
 
     local work_item_id
     work_item_id="$(resolve_work_item "${query}")" || return 1
@@ -869,7 +904,7 @@ cmd_cancel() {
     local query
     query="$(parse_query_arg "$@")"
     local target_state
-    target_state="$(parse_state_flag "$@")"
+    target_state="$(resolve_target_state "" "$@")"
 
     local work_item_id
     work_item_id="$(resolve_for_session_action "${query}" "${STATE_RUNNING}|${STATE_PAUSED}|${STATE_ENDED}" "cancel")" || return 1
@@ -912,7 +947,7 @@ cmd_undo() {
     local query
     query="$(parse_query_arg "$@")"
     local target_state
-    target_state="$(parse_state_flag "$@")"
+    target_state="$(resolve_target_state "" "$@")"
 
     local work_item_id
     work_item_id="$(resolve_for_session_action "${query}" "${STATE_RUNNING}|${STATE_PAUSED}|${STATE_ENDED}" "undo")" || return 1

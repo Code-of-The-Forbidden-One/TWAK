@@ -64,7 +64,17 @@ when invoked with
 .B init \fR[\fB\-\-global\fR]
 Configure the Azure DevOps connection. Prompts for organisation, project,
 team, how to sign in (\fBazcli\fR, your Azure CLI login, or \fBpat\fR, a
-personal access token), and time tracking field names.
+personal access token), time tracking field names, and, optionally, the
+board states to move a work item to when you start or pause it
+.RB ( TWK_STATE_ON_START ,
+.BR TWK_STATE_ON_PAUSE )
+and the state
+.B done
+and
+.B "end \-\-done"
+set
+.RB ( TWK_STATE_DONE ,
+default Done).
 .IP
 By default, writes a project-local config to
 .I .twk/config
@@ -104,11 +114,17 @@ use and whether it is trusted, its settings (never the token), where
 this project's sessions are kept, and whether Azure DevOps can be
 reached and as whom. Exits non-zero when something needs fixing.
 .TP
-.B start \fR[\fItask\fR] [\fB\-\-state\fR \fIstate\fR]
+.B start \fR[\fItask\fR] [\fB\-\-state\fR \fIstate\fR | \fB\-\-no\-state\fR]
 Start timing a work item. If the item is paused, resumes it instead.
-Use
+If
+.B TWK_STATE_ON_START
+is set (by
+.BR init ),
+the work item is moved to that state.
 .B \-\-state
-to set the work item state in Azure DevOps (e.g. Doing, Active).
+sets a different state this once (e.g. Doing, Active), and
+.B \-\-no\-state
+leaves the state alone.
 When
 .I task
 is omitted, the interactive picker lists current sprint items with
@@ -120,21 +136,29 @@ is shown in a column at the end of each row. Titles are truncated
 to 40 characters and assignee names to 15 characters, both with
 .IR ... .
 .TP
-.B pause \fR[\fItask\fR] [\fB\-\-state\fR \fIstate\fR]
+.B pause \fR[\fItask\fR] [\fB\-\-state\fR \fIstate\fR | \fB\-\-no\-state\fR]
 Pause an active timing session. Elapsed time is preserved.
-Use
+If
+.B TWK_STATE_ON_PAUSE
+is set (by
+.BR init ),
+the work item is moved to that state.
 .B \-\-state
-to set the work item state in Azure DevOps (e.g. Paused).
+sets a different state this once, and
+.B \-\-no\-state
+leaves the state alone.
 When
 .I task
 is omitted, the interactive picker only lists currently running
 sessions; a single match is selected automatically.
 .TP
-.B end \fR[\fItask\fR] [\fB\-\-state\fR \fIstate\fR]
-End a timing session. The item can be running or paused.
-Use
+.B end \fR[\fItask\fR] [\fB\-\-done\fR | \fB\-\-state\fR \fIstate\fR]
+End a timing session. The item can be running or paused. The work item
+state is not changed unless you pass
+.B \-\-done
+(the configured done state) or
 .B \-\-state
-to set the work item state in Azure DevOps (e.g. Done).
+(any state).
 When
 .I task
 is omitted, the interactive picker only lists running or paused

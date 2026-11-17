@@ -13,8 +13,9 @@ Options:
     --global    Write the configuration to ~/.config/twk/config
                 instead of a project-local .twk/config
 
-Prompts for your organisation, project, team, how to sign in, and the
-Azure DevOps field names used for time tracking.
+Prompts for your organisation, project, team, how to sign in, the
+Azure DevOps field names used for time tracking, and, optionally, the
+board states to move a work item to when you start or pause it.
 
 Sign-in is either your Azure CLI login (azcli: run 'az login' first;
 nothing secret is stored, and the default when 'az' is installed) or a
@@ -97,14 +98,18 @@ HELP
 twk start - Start timing a work item
 
 Usage:
-    twk start [task] [--state <state>]
+    twk start [task] [--state <state> | --no-state]
 
 Arguments:
     [task]            Work item ID, partial title, or omit for interactive picker
     --state <state>   Set the work item state in Azure DevOps
+    --no-state        Don't apply the start state set in 'twk init'
 
 Starts a new timing session. If the work item is currently paused,
 resumes it instead. Multiple work items can be tracked in parallel.
+
+If 'twk init' set a state for starting work (TWK_STATE_ON_START), the
+work item is moved to it on the board. --state overrides it once.
 
 When omitted, the interactive picker lists current sprint items
 with running sessions hidden (you can't start something already
@@ -120,6 +125,7 @@ Examples:
     twk start "login bug"               Start by partial title match
     twk start                           Pick from current sprint interactively
     twk start 12345 --state Doing       Start and set state to Doing
+    twk start 12345 --no-state          Start without changing state
 HELP
             ;;
         pause)
@@ -127,14 +133,18 @@ HELP
 twk pause - Pause timing a work item
 
 Usage:
-    twk pause [task] [--state <state>]
+    twk pause [task] [--state <state> | --no-state]
 
 Arguments:
     [task]            Work item ID, partial title, or omit for interactive picker
     --state <state>   Set the work item state in Azure DevOps
+    --no-state        Don't apply the pause state set in 'twk init'
 
 Pauses an active session. Elapsed time is preserved and can be
 resumed with 'twk start'. Only works on currently running items.
+
+If 'twk init' set a state for pausing work (TWK_STATE_ON_PAUSE), the
+work item is moved to it on the board. --state overrides it once.
 
 When omitted, the interactive picker only lists currently running
 sessions (not the full sprint). If exactly one is running, it is
@@ -143,7 +153,8 @@ selected automatically.
 Examples:
     twk pause 12345
     twk pause "login bug"
-    twk pause 12345 --state Paused
+    twk pause 12345 --state Blocked
+    twk pause 12345 --no-state
 HELP
             ;;
         end)
@@ -151,10 +162,11 @@ HELP
 twk end - Stop timing a work item
 
 Usage:
-    twk end [task] [--state <state>]
+    twk end [task] [--done | --state <state>]
 
 Arguments:
     [task]            Work item ID, partial title, or omit for interactive picker
+    --done            Also mark the work item done (the done state from 'twk init')
     --state <state>   Set the work item state in Azure DevOps
 
 Ends a session. The work item can be running or paused. Once ended,
@@ -168,7 +180,7 @@ exactly one is in a valid state, it is selected automatically.
 
 Examples:
     twk end 12345                       End without changing state
-    twk end 12345 --state Done          End and mark as Done
+    twk end 12345 --done                End and mark as done
     twk end 12345 --state "Code Review" End and set custom state
 HELP
             ;;

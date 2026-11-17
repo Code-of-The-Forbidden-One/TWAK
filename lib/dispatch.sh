@@ -56,6 +56,8 @@ Arguments:
 Options:
     --global             (init only) Write to the global config rather than project-local
     --state <state>      (start, pause, end, done, undo, cancel) Set AzDO work item state
+    --no-state           (start, pause) Don't apply the state set in 'twk init'
+    --done               (end) Also set the done state from 'twk init'
     --with-existing      (status only) Show post-commit projection (existing AzDO + tracked)
     -i, --interactive    (list only) Open in fzf with preview pane; prints selected ID
     --sort=<col>         (list only) Sort by column (id, title, state, pri, est, done,
@@ -69,7 +71,8 @@ Options:
     --days=<n>           (log only) Limit history to the last N days (default 7)
     --by-id              (log only) Group history by work item ID instead of date
 
-Note: --state X on any time-tracking command also fires an immediate PATCH to AzDO.
+Note: a state change (--state, --done, or one set in 'twk init' for start and
+pause) is sent to AzDO immediately; the time still waits for 'twk commit'.
 
 Pass --help (or -h) to any subcommand for full per-command help.
 

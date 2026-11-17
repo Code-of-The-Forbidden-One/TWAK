@@ -23,10 +23,16 @@ readonly TWK_CONFIG_KEYS=(
     TWK_PAT
     TWK_TIME_FIELD_TASK
     TWK_TIME_FIELD_FEATURE
+    TWK_STATE_ON_START
+    TWK_STATE_ON_PAUSE
+    TWK_STATE_DONE
     TWK_STATE_ACTIVE
     TWK_STATE_PAUSED
-    TWK_STATE_DONE
 )
+# TWK_STATE_ACTIVE and TWK_STATE_PAUSED were written by twk 0.1.x but never
+# used. They are still accepted, so old configs load without warnings, and
+# still ignored: their values were defaults nobody chose, so treating them
+# as "move the item on start/pause" would surprise everyone who upgrades.
 readonly TWK_FIELD_NAME_PATTERN='^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)*$'
 
 config_global_file() {
@@ -220,6 +226,7 @@ config_parse_file() {
     done < "${file}"
 
     TWK_AUTH="${TWK_AUTH:-pat}"
+    TWK_STATE_DONE="${TWK_STATE_DONE:-Done}"
     if [[ -z "${TWK_TIME_FIELD_FEATURE}" ]]; then
         TWK_TIME_FIELD_FEATURE="${TWK_TIME_FIELD_TASK}"
     fi
@@ -305,8 +312,8 @@ config_write() {
     local personal_access_token="$5"
     local time_field_task="$6"
     local time_field_feature="$7"
-    local state_active="$8"
-    local state_paused="$9"
+    local state_on_start="$8"
+    local state_on_pause="$9"
     local state_done="${10}"
     local auth="${11:-pat}"
 
@@ -318,7 +325,7 @@ config_write() {
 
     local escaped_organization escaped_project escaped_team escaped_pat
     local escaped_time_field_task escaped_time_field_feature
-    local escaped_state_active escaped_state_paused escaped_state_done
+    local escaped_state_on_start escaped_state_on_pause escaped_state_done
     local escaped_auth
     printf -v escaped_organization '%q' "${organization}"
     printf -v escaped_project '%q' "${project}"
@@ -327,8 +334,8 @@ config_write() {
     printf -v escaped_pat '%q' "${personal_access_token}"
     printf -v escaped_time_field_task '%q' "${time_field_task}"
     printf -v escaped_time_field_feature '%q' "${time_field_feature}"
-    printf -v escaped_state_active '%q' "${state_active}"
-    printf -v escaped_state_paused '%q' "${state_paused}"
+    printf -v escaped_state_on_start '%q' "${state_on_start}"
+    printf -v escaped_state_on_pause '%q' "${state_on_pause}"
     printf -v escaped_state_done '%q' "${state_done}"
 
     # Created private before anything is written to it.
@@ -343,8 +350,8 @@ TWK_AUTH=${escaped_auth}
 TWK_PAT=${escaped_pat}
 TWK_TIME_FIELD_TASK=${escaped_time_field_task}
 TWK_TIME_FIELD_FEATURE=${escaped_time_field_feature}
-TWK_STATE_ACTIVE=${escaped_state_active}
-TWK_STATE_PAUSED=${escaped_state_paused}
+TWK_STATE_ON_START=${escaped_state_on_start}
+TWK_STATE_ON_PAUSE=${escaped_state_on_pause}
 TWK_STATE_DONE=${escaped_state_done}
 EOF
 }
@@ -525,26 +532,24 @@ cmd_init() {
     fi
 
     echo ""
-    echo "Work item states"
-    echo "Your board's state names. 'twk done' sets the done state; start, pause"
-    echo "and end change state only when you pass --state <state>."
+    echo "Work item states (optional)"
+    echo "twk can move a work item on your board when you start or pause it."
+    echo "Use your board's state names (e.g. Active, Doing, In Progress)."
+    echo "Leave blank to leave the state alone."
     echo ""
 
-    local state_active state_paused state_done
+    local state_on_start state_on_pause state_done
 
-    read -rp "State for start (default: Active): " state_active
-    state_active="${state_active:-Active}"
+    read -rp "State when you start an item (blank: don't change): " state_on_start
+    read -rp "State when you pause an item (blank: don't change): " state_on_pause
 
-    read -rp "State for pause (default: Paused): " state_paused
-    state_paused="${state_paused:-Paused}"
-
-    read -rp "State for 'twk done' (default: Done): " state_done
+    read -rp "State for 'twk done' and 'twk end --done' (default: Done): " state_done
     state_done="${state_done:-Done}"
 
     config_write "${target_file}" \
         "${organization}" "${project}" "${team}" "${personal_access_token}" \
         "${time_field_task}" "${time_field_feature}" \
-        "${state_active}" "${state_paused}" "${state_done}" "${auth}"
+        "${state_on_start}" "${state_on_pause}" "${state_done}" "${auth}"
 
     local scope
     if [[ "${use_global}" == true ]]; then
@@ -705,6 +710,7 @@ cmd_doctor() {
         doctor_line "auth" "Azure CLI sign-in"
     fi
     doctor_line "time" "${TWK_TIME_FIELD_TASK} (tasks), ${TWK_TIME_FIELD_FEATURE} (features)"
+    doctor_line "states" "start → ${TWK_STATE_ON_START:-(no change)}, pause → ${TWK_STATE_ON_PAUSE:-(no change)}, done → ${TWK_STATE_DONE}"
     local uncommitted
     uncommitted="$(session_list_uncommitted | grep -c . || true)"
     doctor_line "sessions" "${TWK_DATA_DIR} (${uncommitted} uncommitted)"

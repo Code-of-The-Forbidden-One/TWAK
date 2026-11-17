@@ -94,10 +94,10 @@ twk has two distinct ways of writing to Azure DevOps. Knowing which is which avo
 
 | Flow | Commands | When does AzDO see it? |
 |---|---|---|
-| **Commit cycle (deferred)** | `start`, `pause`, `end`, `undo`, `cancel`, `status`, `commit` | `start`/`pause`/`end`/`undo`/`cancel` only touch local session files. AzDO is contacted **only** on `twk commit`, which pushes the accumulated hours in one go. |
+| **Commit cycle (deferred)** | `start`, `pause`, `end`, `undo`, `cancel`, `adjust`, `add`, `status`, `commit` | `start`/`pause`/`end`/`undo`/`cancel`/`adjust`/`add` only touch local session files. AzDO is contacted **only** on `twk commit`, which pushes the accumulated hours in one go. |
 | **Immediate AzDO actions** | `done`, `assign`, `comment`, `reset` | PATCH/POST to AzDO **as soon as you invoke them**. No staging, no `commit`, no twk-side undo — fix via the AzDO web UI or by re-running with different arguments. `reset` is destructive (wipes the time field) so it confirms by default. |
 | **Immediate (alongside session change)** | `--state X` flag on any time-tracking command | Fires an immediate state PATCH on top of the local session change. The session part still goes through the commit cycle; the state change does not. |
-| **Read-only / local** | `list`, `show`, `users`, `log`, `pull`, `init` (writes local config), `version`, `help` | No writes to AzDO state. `list`/`show`/`users` read from AzDO. `pull` reads from AzDO and writes only to your local meta cache. `log` reads only the local committed/ archive — no network. `status` is local-only by default; with `--with-existing` it reads from AzDO. |
+| **Read-only / local** | `list`, `show`, `users`, `log`, `pull`, `doctor`, `init` and `trust` (write local config), `version`, `help` | No writes to AzDO state. `list`/`show`/`users` read from AzDO; `doctor` checks the connection. `pull` reads from AzDO and writes only to your local meta cache. `log` reads only the local committed/ archive — no network. `status` is local-only by default; with `--with-existing` it reads from AzDO. |
 
 The commit cycle is the safe, iterable flow — track time offline, review with `status`, fix with `undo`/`cancel`, push when ready. The immediate flow is for things that don't have a meaningful "draft" stage (a state change, an assignment).
 
@@ -124,9 +124,8 @@ You will be prompted for:
 - **Personal Access Token** (only for `pat`) - a PAT with **Work Items (Read & Write)** scope
 - **Time field for Tasks** - the AzDO field name to write time to for tasks (e.g. `Custom.TimeSpent`, `Microsoft.VSTS.Scheduling.CompletedWork`)
 - **Time field for Features** - the AzDO field name for features, or leave blank if the same as tasks
-- **State for start** - the AzDO state name to use with `--state` on start (default: `Active`)
-- **State for pause** - the AzDO state name to use with `--state` on pause (default: `Paused`)
-- **State for end --done** - the AzDO state name to use with `--done` (default: `Done`)
+- **State for start** and **State for pause** (defaults `Active` and `Paused`) - saved in the config, but not used yet: `start`, `pause`, and `end` change a work item's state only when you pass `--state <state>`
+- **State for `twk done`** - the state `twk done` sets when you don't pass `--state` (default: `Done`)
 
 Configuration is stored at `.twk/config` (local) or `~/.config/twk/config` (global) with restrictive file permissions (`600`) and directory permissions (`700`).
 
@@ -163,14 +162,14 @@ Time field for Tasks (e.g. Custom.TimeSpent): Custom.TimeSpent
 Time field for Features (leave blank if same as Tasks):
 
 Work item states
-These map twk actions to your board's column/state names.
-Leave blank to skip state updates for that action.
+Your board's state names. 'twk done' sets the done state; start, pause
+and end change state only when you pass --state <state>.
 
 State for start (default: Active): Doing
 State for pause (default: Paused):
-State for end --done (default: Done):
+State for 'twk done' (default: Done):
 
-Configuration saved to /home/user/Projects/Platform/.twk/config
+Configuration saved to /home/user/Projects/Platform/.twk/config (local scope)
 
 Added '.twk/' to /home/user/Projects/Platform/.gitignore to keep your PAT out of git.
 Reminder: review and commit the .gitignore change before pushing.
@@ -189,7 +188,8 @@ $ twk init --global
 
   ...prompts...
 
-Configuration saved to /home/user/.config/twk/config
+Configuration saved to /home/user/.config/twk/config (global scope)
+
 Testing connection...
 Connected successfully.
 ```
@@ -262,7 +262,7 @@ Starts a timing session on a work item. Supports three resolution modes:
 
 | Usage                         | Behaviour                                                        |
 |-------------------------------|------------------------------------------------------------------|
-| `twk start 12345`            | Direct work item ID - no API lookup required                     |
+| `twk start 12345`            | Direct work item ID - no search (the title is fetched once, best-effort, for `twk status`) |
 | `twk start "login bug"`      | Case-insensitive title search against the current sprint         |
 | `twk start`                  | Interactive picker (`fzf` if available, numbered list otherwise) |
 
@@ -354,8 +354,8 @@ Both positional arguments are optional. Omit either or both to drop into an inte
 
 **Flags:**
 
-- `--me` — assign yourself, derived from the PAT's identity via `/_apis/connectionData`. Cannot be combined with an explicit user or with `--all`.
-- `--all` — open the user picker against the org-wide Graph API instead of the sprint. Useful for assigning someone not yet on a sprint item. **Requires `Graph (Read)` scope on your PAT** in addition to `Work Items (Read & Write)`. Regenerate the PAT with the extra scope and re-run `twk init` if you haven't already.
+- `--me` — assign yourself: the identity you are signed in as (your PAT's owner, or your Azure CLI account), from `/_apis/connectionData`. Cannot be combined with an explicit user or with `--all`.
+- `--all` — open the user picker against the org-wide Graph API instead of the sprint. Useful for assigning someone not yet on a sprint item. With a PAT, **it needs the `Graph (Read)` scope** in addition to `Work Items (Read & Write)`: regenerate the PAT with the extra scope and re-run `twk init` if you haven't already. With Azure CLI sign-in, your own account's access applies.
 
 The task argument supports the usual resolution modes (numeric ID, title search). The user argument is whatever Azure DevOps recognises: email, display name, or unique name.
 
@@ -379,6 +379,7 @@ If the user can't be resolved (typo, not in the org, disabled account), the PATC
 
 ```
 $ twk assign 12345 nobody@nowhere
+Error: PATCH https://dev.azure.com/contoso/Platform/_apis/wit/workitems/12345 failed: HTTP 400: <Azure DevOps's reason>
 Error: failed to assign #12345 to nobody@nowhere.
        Check that the user (email, display name, or unique name) is
        recognised in this Azure DevOps organisation.
@@ -394,16 +395,16 @@ Zeros out the configured time field on a work item in Azure DevOps. Useful when 
 
 ```
 $ twk reset 12345
-Current Custom.TimeSpent on #12345: 4.20h
+Current Custom.TimeSpent on #12345: 4.2h
 Reset to 0 on Azure DevOps? [y/N] y
-Reset #12345 (was 4.20h, now 0h)
+Reset #12345 (was 4.2h, now 0h)
 ```
 
-`-y` / `--yes` skips the prompt. Pair carefully with explicit IDs — accidental wipes on a `twk reset` invocation in a wrong shell tab are easy regrets.
+`-y` / `--yes` skips the prompt. Pair carefully with explicit IDs — accidental wipes on a `twk reset` invocation in a wrong shell tab are easy regrets. Like `twk commit`, the reset tests the work item revision it read, so if someone changes the item in between, it is refused rather than applied blind.
 
 ```
 $ twk reset 12345 --yes
-Reset #12345 (was 4.20h, now 0h)
+Reset #12345 (was 4.2h, now 0h)
 ```
 
 If the field is already 0, the command no-ops:
@@ -458,7 +459,7 @@ Posted comment on #12345 at 2026-05-02 14:25:
 
 ### `twk undo [task] [--state <state>]`
 
-Removes the most recent event (`start`, `resume`, `pause`, or `end`) from a session file. Use this when you make a typo - for example, ending a session when you meant to pause it.
+Removes the most recent event (`start`, `resume`, `pause`, `end`, or an `adjust` written by `twk adjust` or `twk add`) from a session file. Use this when you make a typo - for example, ending a session when you meant to pause it.
 
 If undoing the last remaining event leaves the session empty, the session file is removed.
 
@@ -739,10 +740,10 @@ Users assigned to current sprint items:
 Notes:
 
 - **Sprint-scoped by default**: only shows users actually assigned to a sprint item. Team members who aren't yet assigned anything don't appear.
-- **`--all` for the org-wide list**: pulls from the AzDO Graph API instead. Includes everyone in the organisation. Group entries are filtered out — only individual users appear. The ID column shows the user's *descriptor* (a longer opaque string) rather than the UUID. **Requires `Graph (Read)` scope** on your PAT in addition to `Work Items (Read & Write)` — regenerate your PAT with both scopes and re-run `twk init` if you haven't yet.
+- **`--all` for the org-wide list**: pulls from the AzDO Graph API instead. Includes everyone in the organisation. Group entries are filtered out — only individual users appear. The ID column shows the user's *descriptor* (a longer opaque string) rather than the UUID. With a PAT, **it needs the `Graph (Read)` scope** in addition to `Work Items (Read & Write)` — regenerate your PAT with both scopes and re-run `twk init` if you haven't yet. With Azure CLI sign-in, your own account's access applies.
 - **Sorted** alphabetically by display name (case-insensitive).
 - **Deduplicated**: a user assigned to ten items shows up once.
-- Reuses your existing `Work Items (Read & Write)` PAT scope. No extra permissions needed.
+- The sprint list needs no permissions beyond `Work Items (Read)`.
 - Long usernames truncate at 25 chars with `...`; emails at 32.
 - Output auto-pages through `less -FRX` when long. Same opt-outs (`TWK_NO_PAGER=1`, `PAGER=''`) as `twk list`.
 
@@ -848,8 +849,8 @@ Uncommitted time entries:
   ID       Title                                    State      Time         Hours
 ─────────────────────────────────────────────────────────────────────────────────
   #48210   Implement login button                   ended      03:22:45     3.38h
-  #48215   Refactor authentication middleware to... running    00:45:30     .75h
-  #48220   Fix flaky integration test on CI         paused     01:10:00     1.16h
+  #48215   Refactor authentication middleware to... running    00:45:30     0.76h
+  #48220   Fix flaky integration test on CI         paused     01:10:00     1.17h
 ─────────────────────────────────────────────────────────────────────────────────
   Total                                             05:18:15     5.30h
 ```
@@ -865,10 +866,10 @@ Uncommitted time entries:
   ID       Title                                    State      Time         Hours    + AzDO    = Total
 ─────────────────────────────────────────────────────────────────────────────────────────────────────
   #48210   Implement login button                   ended      03:22:45     3.38h    4.20h     7.58h
-  #48215   Refactor authentication middleware to... running    00:45:30     .75h     1.00h     1.75h
-  #48220   Fix flaky integration test on CI         paused     01:10:00     1.16h    0h        1.16h
+  #48215   Refactor authentication middleware to... running    00:45:30     0.76h    1.00h    1.76h
+  #48220   Fix flaky integration test on CI         paused     01:10:00     1.17h    0.00h    1.17h
 ─────────────────────────────────────────────────────────────────────────────────────────────────────
-  Total                                             05:18:15     5.30h    5.20h    10.49h
+  Total                                             05:18:15     5.30h    5.20h    10.51h
 ```
 
 ---
@@ -893,13 +894,26 @@ It never overwrites hours it could not read:
 - The write includes the work item revision that was read. If someone changes the item in between, Azure DevOps refuses the write; run `twk commit` again.
 - If the outcome of a write is unknown (the network dropped, or Azure DevOps returned a server error), the session stays and the next `twk commit` checks whether the earlier write landed before adding anything.
 
+A failed item says why, and the rest carry on:
+
+```
+$ twk commit
+Committing time entries to Azure DevOps...
+
+Error: PATCH https://dev.azure.com/contoso/Platform/_apis/wit/workitems/48210 failed: HTTP 400: <Azure DevOps's reason>
+  #48210: failed to update Azure DevOps (nothing was written)
+  #48220: committed 1.17h (total: 1.17h)
+
+Done: 1 committed, 1 failed/skipped.
+```
+
 ```
 $ twk commit
 Committing time entries to Azure DevOps...
 
   #48210: committed 3.38h (total: 7.38h)
   #48215: skipped (still running - end or pause first)
-  #48220: committed 1.16h (total: 1.16h)
+  #48220: committed 1.17h (total: 1.17h)
 
 Done: 2 committed, 1 failed/skipped.
 ```
@@ -912,9 +926,9 @@ DRY RUN — no changes will be sent to Azure DevOps.
 
   #48210: would commit 3.38h (existing 4.20h → total 7.58h)
   #48215: skipped (still running - end or pause first)
-  #48220: would commit 1.16h (existing 0.00h → total 1.16h)
+  #48220: would commit 1.17h (existing 0.00h → total 1.17h)
 
-Would commit 4.54h across 2 sessions, skipping 1.
+Would commit 4.55h across 2 sessions, skipping 1.
 (no changes were sent to Azure DevOps; sessions remain uncommitted)
 ```
 
@@ -926,13 +940,13 @@ Displays the current version. All three forms produce identical output:
 
 ```
 $ twk version
-twk 0.1.0
+twk 0.2.0
 
 $ twk -v
-twk 0.1.0
+twk 0.2.0
 
 $ twk --version
-twk 0.1.0
+twk 0.2.0
 ```
 
 ---
@@ -985,8 +999,8 @@ Options:
     --state <state>      (start, pause, end, done, undo, cancel) Set AzDO work item state
     --with-existing      (status only) Show post-commit projection (existing AzDO + tracked)
     -i, --interactive    (list only) Open in fzf with preview pane; prints selected ID
-    --sort=<col>         (list only) Sort by id|title|state|pri|est|done|assigned;
-                         prefix with '-' for descending: --sort=-done
+    --sort=<col>         (list only) Sort by column (id, title, state, pri, est, done,
+                         assigned). Prefix with '-' for descending: --sort=-done.
     --me                 (assign only) Assign yourself based on the PAT's identity
     --all                (assign, users) Use org-wide user list (Graph API; needs PAT scope)
                          (log) Show all committed history rather than just the last N days
@@ -997,6 +1011,8 @@ Options:
     --by-id              (log only) Group history by work item ID instead of date
 
 Note: --state X on any time-tracking command also fires an immediate PATCH to AzDO.
+
+Pass --help (or -h) to any subcommand for full per-command help.
 
 Environment:
     TWK_NO_PAGER         Disable the auto-pager for list / show / status.
@@ -1151,7 +1167,7 @@ adjust|1800
 end|1714574400
 ```
 
-The first column is the event type. For `start`/`pause`/`resume`/`end`, the second column is a unix timestamp. For `adjust` (written by `twk adjust`), the second column is a signed delta in seconds — positive adds to the calculated elapsed time, negative subtracts. The format is human-readable, easy to debug, and easy to parse.
+The first column is the event type. For `start`/`pause`/`resume`/`end`, the second column is a unix timestamp. For `adjust` (written by `twk adjust` and `twk add`), the second column is a signed delta in seconds — positive adds to the calculated elapsed time, negative subtracts. `twk add` on a work item with no session writes `start` and `end` at the same moment, then the `adjust`. The format is human-readable, easy to debug, and easy to parse.
 
 ---
 
@@ -1185,17 +1201,17 @@ Generate a PAT at: `https://dev.azure.com/{your-org}/_usersettings/tokens`. If y
 
 `twk` reads and writes the following work item fields:
 
-| Field                                          | Usage                              |
-|------------------------------------------------|------------------------------------|
-| `System.Id`                                    | Work item identification           |
-| `System.Title`                                 | Title matching and display         |
-| `System.WorkItemType`                          | Display in interactive picker      |
-| `System.State`                                 | Display in interactive picker      |
-| `System.State`                                 | Updated on start (Active), pause (Paused), end --done (Done) |
-| Configured time field (e.g. `Custom.TimeSpent`) | Read on commit, updated with tracked hours |
-| `Microsoft.VSTS.Scheduling.RemainingWork`      | Fetched for reference              |
-| `Microsoft.VSTS.Scheduling.StartDate`          | Fetched for reference              |
-| `Microsoft.VSTS.Scheduling.TargetDate`         | Fetched for reference              |
+| Field                                             | Usage                                                        |
+|---------------------------------------------------|--------------------------------------------------------------|
+| `System.Id`, `System.Title`                       | Identification, title search, and display                    |
+| `System.WorkItemType`                             | Display; chooses the Task or Feature time field              |
+| `System.State`                                    | Display; written by `twk done` and by `--state` on any time-tracking command |
+| `System.AssignedTo`                               | Display and the sprint user picker; written by `twk assign`  |
+| `System.Description`, `System.IterationPath`      | Shown by `twk list` and `twk show`                           |
+| `Microsoft.VSTS.Common.Priority`                  | Shown and sortable in `twk list`                             |
+| `Microsoft.VSTS.Scheduling.OriginalEstimate`      | Shown and sortable in `twk list`                             |
+| Configured time fields (e.g. `Custom.TimeSpent`)  | Read and written by `twk commit` and `twk reset`; shown by `list`, `show`, `status --with-existing` |
+| The work item revision (`rev`)                    | Read before `twk commit` and `twk reset` write, and tested by the write so a concurrent change is refused |
 
 ---
 
@@ -1233,7 +1249,25 @@ The source tree is bind-mounted **read-only**, so test runs leave nothing behind
 No `.twk/config` was found in the current directory or any parent, and no global config exists at `~/.config/twk/config`. Run `twk init` to create a project-local config, or `twk init --global` to create a global one.
 
 **"connection test failed"**
-Check that your organisation, project, and PAT are correct. Ensure the PAT has not expired and has the required Work Items scope.
+Run `twk doctor`: it shows the config in use and the reason the connection failed. Check that your organisation and project are correct. With a PAT, check that it has not expired and has the Work Items scope; with Azure CLI sign-in, run `az login`.
+
+**"the local config … is not trusted"**
+The nearest `.twk/config` wasn't written by `twk init`, has changed since you trusted it, or predates 0.2.0. Check its contents, then run `twk trust`.
+
+**"… is not owned by you" or "… can be written by other users"**
+twk only uses a config that you own and that nobody else can change. Fix the permissions with `chmod 600 <file>` and `chmod 700 <its directory>`, or run `twk init` to write your own.
+
+**"could not get an Azure DevOps token from the Azure CLI"**
+Your config uses `TWK_AUTH=azcli`. Run `az login` (inside WSL, if you use twk there).
+
+**"HTTP 401" or "HTTP 403"**
+401: the PAT is wrong or expired, or your Azure CLI sign-in has lapsed. 403: your account or PAT lacks permission, for example the `Graph (Read)` scope for `--all`.
+
+**"another twk command is changing sessions"**
+Another twk command holds the session lock. If none is running (say a terminal was killed mid-command), twk normally takes the lock over by itself; if it doesn't, remove the `.lock` directory the message names.
+
+**"outcome unknown; run 'twk commit' again"**
+The network dropped or Azure DevOps returned a server error during a write, so twk can't tell whether your hours were saved. Run `twk commit` again: it checks before adding anything.
 
 **"no current iteration found"**
 Your team must have an active sprint/iteration configured in Azure DevOps with the current date falling within its date range.

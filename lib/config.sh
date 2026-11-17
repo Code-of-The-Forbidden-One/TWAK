@@ -526,8 +526,8 @@ cmd_init() {
 
     echo ""
     echo "Work item states"
-    echo "These map twk actions to your board's column/state names."
-    echo "Leave blank to skip state updates for that action."
+    echo "Your board's state names. 'twk done' sets the done state; start, pause"
+    echo "and end change state only when you pass --state <state>."
     echo ""
 
     local state_active state_paused state_done
@@ -538,7 +538,7 @@ cmd_init() {
     read -rp "State for pause (default: Paused): " state_paused
     state_paused="${state_paused:-Paused}"
 
-    read -rp "State for end --done (default: Done): " state_done
+    read -rp "State for 'twk done' (default: Done): " state_done
     state_done="${state_done:-Done}"
 
     config_write "${target_file}" \

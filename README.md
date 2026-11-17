@@ -20,16 +20,16 @@
 |------------|----------------------------------------------------|----------|
 | `curl`     | Azure DevOps API requests                          | ✅        |
 | `jq`       | JSON parsing                                       | ✅        |
-| `bc`       | Decimal hour calculations                          | ✅        |
 | `fzf`      | Interactive work item picker                       | ❌ Optional |
 | `git`      | Auto-`.gitignore` for project-local config (PAT protection) | ❌ Optional |
+| `az`       | Sign in with your Azure CLI login instead of a PAT  | ❌ Optional (recommended) |
 
-All required dependencies are standard on most Linux distributions. If `fzf` is not installed, `twk` falls back to a numbered list for interactive selection. If `git` isn't on PATH, project-local `twk init` still works — it just can't auto-add `.twk/` to `.gitignore` for you (it'll print a reminder so you can do it manually).
+All required dependencies are standard on most Linux distributions. twk runs on Linux and on Windows through WSL. It avoids GNU-only options, so it should also run on macOS, but it is not yet tested there. If `fzf` is not installed, `twk` falls back to a numbered list for interactive selection. If `git` isn't on PATH, project-local `twk init` still works — it just can't auto-add `.twk/` to `.gitignore` for you (it'll print a reminder so you can do it manually).
 
 ### Quick Install (one-liner)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Code-of-The-Forbidden-One/TWAK/main/install-remote.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Code-of-The-Forbidden-One/TWAK/master/install-remote.sh | bash
 ```
 
 This clones the repo to `~/.local/share/twk` and symlinks the binary to `~/.local/bin/twk`. Run the same command again to update.
@@ -76,6 +76,12 @@ twk status
 
 # Push it all to Azure DevOps
 twk commit
+
+# Forgot to track something? Add it, then commit
+twk add 12345 45m
+
+# Check which config is in use and that you can connect
+twk doctor
 ```
 
 ---
@@ -105,14 +111,17 @@ By default, `twk init` writes a **project-local** config to `.twk/config` in the
 
 When `twk` runs, it walks up from the current working directory looking for `.twk/config` and uses the first one it finds. If none is found, it falls back to the global config. This lets you keep different Azure DevOps connections per project (e.g. different orgs, different time fields) and a default for everything else.
 
-If the local config is created inside a git repository, `twk` appends `.twk/` to `.gitignore` (creating the file if needed) so your Personal Access Token doesn't get committed. A reminder is printed either way - review the change before pushing.
+`twk init` trusts the local config it writes. A `.twk/config` that arrived any other way, for example in a repository you cloned, is not used until you review it and run [`twk trust`](#twk-trust--y--yes).
+
+If a local config holding a Personal Access Token is created inside a git repository, `twk` appends `.twk/` to `.gitignore` (creating the file if needed) so the token doesn't get committed. A reminder is printed either way - review the change before pushing.
 
 You will be prompted for:
 
 - **Organisation** - your Azure DevOps org name (e.g. `myorg`)
 - **Project** - the project containing your boards (e.g. `MyProject`)
 - **Team** - your team name, or leave blank for the default team
-- **Personal Access Token** - a PAT with **Work Items (Read & Write)** scope
+- **Authentication** - `azcli` to use your Azure CLI sign-in (run `az login` first; nothing secret is stored, and this is the default when `az` is installed), or `pat` to use a Personal Access Token
+- **Personal Access Token** (only for `pat`) - a PAT with **Work Items (Read & Write)** scope
 - **Time field for Tasks** - the AzDO field name to write time to for tasks (e.g. `Custom.TimeSpent`, `Microsoft.VSTS.Scheduling.CompletedWork`)
 - **Time field for Features** - the AzDO field name for features, or leave blank if the same as tasks
 - **State for start** - the AzDO state name to use with `--state` on start (default: `Active`)
@@ -139,6 +148,11 @@ $ twk init
 Organisation (e.g. myorg): contoso
 Project (e.g. MyProject): Platform
 Team (e.g. MyTeam, or leave blank for default): Backend
+
+Authentication
+  azcli  Use your Azure CLI sign-in ('az login'); nothing secret is stored
+  pat    Use a Personal Access Token, stored in the config file
+Authentication method [azcli/pat] (default: azcli): pat
 Personal Access Token: ****
 
 Time tracking fields
@@ -179,6 +193,66 @@ Configuration saved to /home/user/.config/twk/config
 Testing connection...
 Connected successfully.
 ```
+
+---
+
+### `twk trust [-y|--yes]`
+
+Approves the nearest project-local `.twk/config` after you have reviewed it.
+
+A local config decides which organisation your time, comments, and state changes go to, so `twk` uses one only if `twk init` wrote it or you have trusted it. `twk trust` prints the file, with any token masked, and asks before trusting it. Trust is tied to the file's contents: if the file changes, `twk` stops using it until you trust it again. Records live in `~/.config/twk/trusted`.
+
+```
+$ twk status
+Error: the local config /home/user/Projects/Platform/.twk/config is not trusted.
+       twk uses a local config only if 'twk init' wrote it or you have
+       reviewed and approved it. Check its contents, then run 'twk trust'.
+$ twk trust
+Local config: /home/user/Projects/Platform/.twk/config
+
+    TWK_ORGANIZATION=contoso
+    TWK_PROJECT=Platform
+    ...
+
+Use this config for twk commands under /home/user/Projects/Platform? [y/N] y
+Trusted /home/user/Projects/Platform/.twk/config.
+```
+
+`twk` also refuses any config file, local or global, that you do not own or that other users can write to.
+
+---
+
+### `twk doctor`
+
+Shows which config is in use and checks that `twk` can reach Azure DevOps. Use it when something doesn't work, or to see which organisation a directory's commands go to.
+
+```
+$ twk doctor
+twk 0.2.0 (bash 5.2.15(1)-release)
+
+Dependencies
+  ok       curl
+  ok       jq
+  ok       fzf
+  ok       git
+  ok       az
+
+Configuration
+  file     /home/user/Projects/Platform/.twk/config (local, trusted)
+  org      contoso
+  project  Platform
+  team     Backend
+  auth     Azure CLI sign-in
+  time     Custom.TimeSpent (tasks), Custom.TimeSpent (features)
+  sessions /home/user/.local/share/twk/scopes/contoso/platform (2 uncommitted)
+
+Connection
+  ok       connected to contoso as Ada Lovelace
+
+All good.
+```
+
+The token itself is never printed. Exits non-zero when something needs fixing.
 
 ---
 
@@ -472,11 +546,25 @@ Notes:
 
 ---
 
+### `twk add [task] <duration>`
+
+Adds time you forgot to track. The duration takes the same forms as `twk adjust`: `1h`, `30m`, `45s`, `1h30m`, or decimal hours like `2.5h`.
+
+```
+$ twk add 48210 1h30m
+Added 01:30:00 to #48210 (01:30:00 uncommitted).
+Run 'twk commit' to push it to Azure DevOps.
+```
+
+If the work item already has a session, the time is added to it. If not, `twk add` creates one (already ended) holding just that time. Like every time-tracking command, nothing reaches Azure DevOps until `twk commit`. With only a duration (`twk add 2h`), it opens the sprint picker.
+
+---
+
 ### `twk cancel [task] [--state <state>]`
 
 Discards an uncommitted local session. Use this when you started tracking the wrong work item, or left a timer running by mistake.
 
-The session file is archived to `~/.local/share/twk/sessions/cancelled/` for audit - it is not silently deleted. Nothing is pushed to Azure DevOps.
+The session file is archived to the project's `cancelled/` folder (see [Data Storage](#data-storage)) for audit - it is not silently deleted. Nothing is pushed to Azure DevOps.
 
 When the task is omitted, the interactive picker only lists existing sessions (any state) rather than the full sprint. A single match auto-selects.
 
@@ -662,9 +750,9 @@ Notes:
 
 ### `twk log [--days=N | --all] [--by-id]`
 
-Browses the history of committed time entries. Reads `~/.local/share/twk/sessions/committed/`, joins each archived session with its `.meta` sidecar for the title, and renders a chronological view of what you've pushed to AzDO.
+Browses the history of committed time entries for the current organisation and project. Reads the project's `committed/` folder (see [Data Storage](#data-storage)), joins each archived session with its `.meta` sidecar for the title, and renders a chronological view of what you've pushed to AzDO.
 
-**Local-only.** Hits no network, ignores PAT and config. Output auto-pages through `less -FRX` when long.
+**Local-only.** Hits no network. It reads the config only to know which organisation's and project's history to show. Output auto-pages through `less -FRX` when long.
 
 **Defaults to the last 7 days, grouped by date.** Newest day first; within each day, commits sort newest-first by time, with ID as a tiebreaker. Each row leads with the commit time as `HH:MM`.
 
@@ -793,10 +881,17 @@ Like `twk list` and `twk show`, the table portion auto-pages through `less -FRX`
 
 Pushes all uncommitted time entries to Azure DevOps by updating the configured time field on each work item.
 
-- Time is **additive** - `twk` reads the existing value and adds your tracked hours to it
+- Time is **additive** - `twk` reads the existing value and adds your tracked hours to it, rounded to the nearest 0.01h
 - The target field is determined by work item type (Task vs Feature) based on your `twk init` configuration
 - Work items that are still running are **skipped** - end or pause them first
-- Committed sessions are archived to `~/.local/share/twk/sessions/committed/` for audit
+- Only the current organisation's and project's sessions are committed: run it from the project whose config you tracked under
+- Committed sessions are archived to the project's `committed/` folder for audit
+
+It never overwrites hours it could not read:
+
+- If the current value can't be read, nothing is written for that item and its session stays uncommitted.
+- The write includes the work item revision that was read. If someone changes the item in between, Azure DevOps refuses the write; run `twk commit` again.
+- If the outcome of a write is unknown (the network dropped, or Azure DevOps returned a server error), the session stays and the next `twk commit` checks whether the earlier write landed before adding anything.
 
 ```
 $ twk commit
@@ -817,7 +912,7 @@ DRY RUN — no changes will be sent to Azure DevOps.
 
   #48210: would commit 3.38h (existing 4.20h → total 7.58h)
   #48215: skipped (still running - end or pause first)
-  #48220: would commit 1.16h (existing 0h → total 1.16h)
+  #48220: would commit 1.16h (existing 0.00h → total 1.16h)
 
 Would commit 4.54h across 2 sessions, skipping 1.
 (no changes were sent to Azure DevOps; sessions remain uncommitted)
@@ -851,6 +946,8 @@ $ twk help
 Usage:
   Setup
     twk init             Configure Azure DevOps connection
+    twk trust            Approve a project-local .twk/config after reviewing it
+    twk doctor           Show the active config and check the connection
 
   Time tracking (commit cycle — local until 'twk commit'):
     twk start            Start timing a work item
@@ -859,6 +956,7 @@ Usage:
     twk undo             Undo the last event on a session
     twk cancel           Discard an uncommitted session
     twk adjust           Manually adjust recorded time on a session
+    twk add              Add time you forgot to track (e.g. twk add 123 1h30m)
     twk status           View uncommitted time entries
     twk commit           Push accumulated hours to Azure DevOps
 
@@ -894,7 +992,7 @@ Options:
                          (log) Show all committed history rather than just the last N days
     --discussion         (show only) Append the AzDO Discussion thread (comments)
     --dry-run            (commit only) Preview what would be pushed without writing
-    -y, --yes            (reset only) Skip the destructive-action confirmation prompt
+    -y, --yes            (reset, trust) Skip the confirmation prompt
     --days=<n>           (log only) Limit history to the last N days (default 7)
     --by-id              (log only) Group history by work item ID instead of date
 
@@ -912,7 +1010,7 @@ Pass `--help` (or `-h`) to any subcommand for detailed help on that command (e.g
 
 ## Windows (WSL)
 
-`twk` runs natively on Windows through the Windows Subsystem for Linux. If you don't have WSL set up yet, open PowerShell as Administrator and run:
+`twk` runs on Windows through the Windows Subsystem for Linux. If you don't have WSL set up yet, open PowerShell as Administrator and run:
 
 ```powershell
 wsl --install
@@ -921,37 +1019,53 @@ wsl --install
 Restart your machine when prompted, then launch Ubuntu from the Start menu. Once inside WSL, install the dependencies and `twk` as normal:
 
 ```bash
-sudo apt update && sudo apt install -y curl jq bc
-curl -fsSL https://raw.githubusercontent.com/Code-of-The-Forbidden-One/TWAK/main/install-remote.sh | bash
+sudo apt update && sudo apt install -y curl jq
+curl -fsSL https://raw.githubusercontent.com/Code-of-The-Forbidden-One/TWAK/master/install-remote.sh | bash
 source ~/.bashrc
 twk init
 ```
 
+To sign in with the Azure CLI rather than a PAT, install it inside WSL too (`curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash`) and run `az login` there. The Windows `az` doesn't share its sign-in with WSL.
+
 After setup, you can use `twk` from any WSL terminal. If you use Windows Terminal, pin your WSL profile for quick access.
+
+### Using `twk` from PowerShell
+
+Add this function to your PowerShell profile so `twk` works like a native command. Open the profile with:
+
+```powershell
+notepad $PROFILE
+```
+
+Append this and save:
+
+```powershell
+function twk {
+    if (-not $global:TwkPath) {
+        $global:TwkPath = (wsl.exe --exec sh -c 'echo $HOME/.local/bin/twk').Trim()
+    }
+    wsl.exe --exec $global:TwkPath @args
+}
+```
+
+New PowerShell sessions now treat `twk` as a native command:
+
+```powershell
+PS> twk start "auth refactor"
+PS> twk status
+PS> twk commit
+```
+
+How it works, and why it isn't just `wsl twk @args`:
+
+- `wsl twk` runs `twk` through a non-interactive shell that doesn't read `~/.bashrc`, so `~/.local/bin` isn't on its `PATH` and the command isn't found. The function calls twk by its full path instead, which it looks up once per session.
+- `wsl twk` also hands the arguments to a Linux shell, which splits them again: `twk start "auth refactor"` would arrive as two words. `wsl.exe --exec` runs twk directly, so each argument arrives exactly as PowerShell passed it.
+- twk runs in the PowerShell window's current directory (as `/mnt/c/...`), so a project's `.twk/config` is found as usual.
+- Use PowerShell 7.3 or later if your arguments contain double quotes (for example, a `twk comment` text). Windows PowerShell 5.1 strips embedded double quotes when it calls a native program.
 
 ### Tips for WSL users
 
 - **VS Code integration** - Run `code .` from WSL and VS Code connects automatically via the Remote-WSL extension. You can use the integrated terminal to run `twk` alongside your development workflow.
-- **Accessing from PowerShell** - You can call `twk` from PowerShell without opening a WSL window:
-  ```powershell
-  wsl twk status
-  wsl twk start 12345
-  ```
-- **Native-feel `twk` from PowerShell (recommended for Windows users)** — add a one-line function to your PowerShell profile so you can drop the `wsl` prefix entirely. In PowerShell:
-  ```powershell
-  notepad $PROFILE
-  ```
-  Append this and save:
-  ```powershell
-  function twk { wsl twk @args }
-  ```
-  New PowerShell sessions now treat `twk` as if it were a native Windows command:
-  ```powershell
-  PS> twk start 12345
-  PS> twk status
-  PS> twk commit
-  ```
-  The `@args` splat preserves spaces and quoting, so things like `twk start "auth refactor"` work naturally. Quoting follows PowerShell rules on the way in and Bash rules on the way to twk — the WSL boundary handles the conversion.
 - **Optional: fzf for interactive picking** - `sudo apt install -y fzf` enables the fuzzy finder for `twk start` without arguments.
 
 ---
@@ -989,8 +1103,9 @@ TWAK/
 ├── man/
 │   └── twk.1            # Man page
 ├── tests/
-│   ├── *.bats           # bats-core test suite (one file per lib/*.sh)
-│   ├── helpers/         # Shared setup, AzDO mocks, jq/bc fallback stubs
+│   ├── *.bats           # bats-core test suite (one file per lib/*.sh, plus
+│   │                    #   security.bats and commit_safety.bats)
+│   ├── helpers/         # Shared setup, AzDO mocks, jq fallback stub
 │   ├── run.sh           # Test runner wrapper
 │   └── README.md        # How to run the tests
 ├── images/              # README assets
@@ -1011,12 +1126,18 @@ TWAK/
 | `<project>/.twk/` (directory)                | Project-local config directory                       | `700`       |
 | `~/.config/twk/config`                       | Global AzDO connection settings (fallback)           | `600`       |
 | `~/.config/twk/` (directory)                 | Global config directory                              | `700`       |
-| `~/.local/share/twk/sessions/<id>.session`   | Active time tracking sessions                        | Default     |
-| `~/.local/share/twk/sessions/<id>.meta`      | Cached work item title and type (JSON)               | Default     |
-| `~/.local/share/twk/sessions/committed/`     | Archived committed sessions (with their `.meta`)     | Default     |
-| `~/.local/share/twk/sessions/cancelled/`     | Archived cancelled sessions (with their `.meta`)     | Default     |
+| `~/.config/twk/trusted`                      | Local configs you have trusted, with their checksums | `600`       |
+| `<scope>/<id>.session`                       | Active time tracking sessions                        | Default     |
+| `<scope>/<id>.meta`                          | Cached work item title and type (JSON)               | Default     |
+| `<scope>/<id>.pending`                       | A commit whose outcome is not yet known              | Default     |
+| `<scope>/committed/`                         | Archived committed sessions (with their `.meta`)     | Default     |
+| `<scope>/cancelled/`                         | Archived cancelled sessions (with their `.meta`)     | Default     |
 
-Local configs are discovered by walking up from the current working directory. The first `.twk/config` found is used; otherwise twk falls back to the global config.
+`<scope>` is `~/.local/share/twk/scopes/<organisation>/<project>` (lower-cased and URL-encoded). Work item IDs are only unique within an organisation, so each organisation's and project's sessions are kept apart, and `twk commit` only pushes the sessions of the config in use. `twk doctor` shows the folder for the current directory.
+
+Before 0.2.0, all sessions lived in `~/.local/share/twk/sessions/`. The first command you run after upgrading moves them into the scope of the config in use, and says so. If you track time in more than one organisation, check them with `twk status`, and `twk cancel` any that belong elsewhere.
+
+Local configs are discovered by walking up from the current working directory. The first `.twk/config` found is used, if it is trusted; otherwise twk falls back to the global config.
 
 ### Session File Format
 
@@ -1036,17 +1157,20 @@ The first column is the event type. For `start`/`pause`/`resume`/`end`, the seco
 
 ## Security
 
-- Your Personal Access Token is stored locally in either the project-local `.twk/config` or the global `~/.config/twk/config`, both with `600` permissions (owner read/write only)
-- Both config directories are set to `700` (owner access only)
-- When you run `twk init` (project-local) inside a git repository, `twk` automatically appends `.twk/` to `.gitignore` to prevent the PAT from being committed - review the change before pushing
-- The PAT is transmitted over HTTPS via Basic authentication to the Azure DevOps REST API
-- No credentials are logged, cached, or transmitted to any third-party service
+- **Sign in without a stored secret.** With `TWK_AUTH=azcli`, `twk` asks the Azure CLI for a short-lived Entra ID token on each run. Nothing secret is written to disk, and your organisation's sign-in policy (MFA, conditional access) applies.
+- **A PAT, if you use one, stays private.** It is stored in `.twk/config` or `~/.config/twk/config` with `600` permissions, in a `700` directory. It is handed to `curl` on standard input, never on its command line, so other users on the machine cannot read it with `ps`. It goes only to Azure DevOps, over HTTPS.
+- **Config files are data, not code.** `twk` reads `KEY=value` lines and accepts only its own keys; nothing in a config file is ever run.
+- **Only your own config is used.** `twk` refuses a config file that you do not own, or that other users can write to.
+- **Local configs must be trusted.** A `.twk/config` is used only if `twk init` wrote it or you approved it with `twk trust`, and only while its contents are unchanged. A config committed to a repository you clone cannot redirect your time or comments to someone else's organisation.
+- **Text from Azure DevOps cannot control your terminal.** Control characters are stripped from every response, so a work item title, description, or comment written by someone else is printed as plain text.
+- **Git protection.** When `twk init` writes a local config holding a PAT inside a git repository, it appends `.twk/` to `.gitignore`. Review the change before pushing.
+- No credentials are logged, or sent anywhere but Azure DevOps.
 
 ---
 
 ## Azure DevOps PAT Permissions
 
-When creating your Personal Access Token, the minimum required scope is:
+You need a PAT only if you don't sign in with the Azure CLI (`TWK_AUTH=azcli`), which uses your own account's permissions. When creating a Personal Access Token, the minimum required scope is:
 
 | Scope             | Access       | Required | Purpose                                                         |
 |-------------------|--------------|----------|-----------------------------------------------------------------|
@@ -1091,7 +1215,7 @@ You'll need `bats-core` on PATH (`pacman -S bash-bats` on Arch, `apt-get install
 
 ### Running tests in Docker
 
-If you'd rather not install `bats`, `jq`, `bc`, etc. on the host, `docker-test.sh` spins up a throwaway Debian container with everything wired up:
+If you'd rather not install `bats`, `jq`, etc. on the host, `docker-test.sh` spins up a throwaway Debian container with everything wired up:
 
 ```bash
 ./docker-test.sh tests          # run the suite, exit with bats's status

@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
 readonly INSTALL_DIR="${HOME}/.local/bin"
 readonly MAN_DIR="${HOME}/.local/share/man/man1"
+# shellcheck disable=SC2016  # written literally to the profile, expanded there
 readonly PATH_EXPORT='export PATH="${HOME}/.local/bin:${PATH}"'
+# shellcheck disable=SC2016  # written literally to the profile, expanded there
 readonly MANPATH_EXPORT='export MANPATH="${HOME}/.local/share/man:${MANPATH:-}"'
 
 detect_shell_profile() {

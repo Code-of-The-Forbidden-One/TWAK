@@ -19,7 +19,7 @@ bats tests/
 
 ### In Docker (no host install)
 
-If you don't want to install bats / jq / bc on the host, the project's
+If you don't want to install bats / jq on the host, the project's
 `docker-test.sh` can run the suite inside a throwaway Debian container:
 
 ```sh
@@ -50,19 +50,22 @@ Required:
 Optional but recommended (the codebase needs them at runtime; tests fall
 back to python-backed shims if missing):
 
-- **jq** — used by `lib/azdo.sh` and others. Tests that need a real jq
-  filter pull in `tests/helpers/stubs/jq` (a python3 script that handles
-  exactly the filters the codebase invokes). Install real jq if you can:
-  `pacman -S jq`. The real binary wins over the stub when both are on
-  PATH (`tests/run.sh` and `setup.bash` both append the stubs dir).
-- **bc** — used by `lib/display.sh`. The python-backed `tests/helpers/stubs/bc`
-  covers the two patterns the codebase uses (`scale=2; <a> / <b>` and
-  `scale=2; <a> + <b>`). Real bc wins when present (same PATH ordering).
-- **python3** — required only if jq or bc are missing on PATH; the
-  fallback stubs are written in Python.
+- **jq** — used throughout. Install real jq (`apt-get install jq`,
+  `pacman -S jq`, `brew install jq`): it is a runtime dependency, and the
+  request layer, hours arithmetic, and batch splitting use filters that
+  the python-backed `tests/helpers/stubs/jq` does not cover. The stub
+  remains a fallback for older tests; the real binary wins when both are
+  on PATH (`tests/run.sh` and `setup.bash` both append the stubs dir).
+- **python3** — required only if jq is missing on PATH; the fallback stub
+  is written in Python.
+- **procps** (`kill`) — the session-lock tests check whether a lock's
+  owner is still running.
 
-The `curl` and `fzf` paths are not exercised by the suite (every AzDO call
-is mocked, every fzf branch is sidestepped via the no-fzf code path).
+The `fzf` paths are not exercised (every fzf branch is sidestepped via the
+no-fzf code path). The request layer is: `security.bats` puts a fake
+`curl` on PATH that records each call's arguments and standard input and
+answers with scripted statuses, to prove the credential never reaches the
+command line and that retries and errors behave.
 
 ## Layout
 
@@ -72,8 +75,7 @@ tests/
     setup.bash         per-test env (TWK_DATA_DIR, TWK_CONFIG_DIR), assertion helpers
     mock_azdo.bash     overrides for every azdo_* function, fixture-driven, with call recording
     stubs/
-      jq               python3 fallback for jq, scoped to filters the codebase uses
-      bc               python3 fallback for bc, scoped to scale=2 add/divide
+      jq               python3 fallback for jq, scoped to the older filters
   config.bats          lib/config.sh
   session.bats         lib/session.sh
   azdo.bats            lib/azdo.sh
@@ -82,10 +84,15 @@ tests/
   help.bats            lib/help.sh
   twk_dispatch.bats    bin/twk dispatcher routing + --help-anywhere behaviour
   integration.bats     start → pause → resume → end → commit, archive layout, PATCH issued
+  security.bats        config parsing, ownership and trust, per-organisation sessions,
+                       credential handling, retries, errors, response sanitising
+  commit_safety.bats   commit never overwrites unread hours, revision checks, recovery
+                       of unknown outcomes, `twk add`, session locking, `twk doctor`
   run.sh               wrapper script
 ```
 
-One `*.bats` per `lib/*.sh` plus `integration.bats` and `twk_dispatch.bats`.
+One `*.bats` per `lib/*.sh`, plus `integration.bats`, `twk_dispatch.bats`,
+`security.bats`, and `commit_safety.bats`.
 
 ## Mocking strategy
 

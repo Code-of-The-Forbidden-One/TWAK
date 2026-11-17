@@ -15,6 +15,23 @@
 load 'helpers/setup.bash'
 load 'helpers/mock_azdo.bash'
 
+# The batch fetchers call azdo_api_request inside a command substitution,
+# so a stub cannot set the caller's variables; it records to files.
+_capture_api_request() {
+    azdo_api_request() {
+        printf '%s' "$1" > "${BATS_TEST_TMPDIR}/cap_method"
+        printf '%s' "$2" > "${BATS_TEST_TMPDIR}/cap_url"
+        printf '%s\n' "$3" >> "${BATS_TEST_TMPDIR}/cap_body"
+        printf '%s' '{"value":[]}'
+    }
+}
+
+_read_capture() {
+    captured_method="$(cat "${BATS_TEST_TMPDIR}/cap_method")"
+    captured_url="$(cat "${BATS_TEST_TMPDIR}/cap_url")"
+    captured_body="$(cat "${BATS_TEST_TMPDIR}/cap_body")"
+}
+
 setup() {
     twk_setup_env
     twk_source_libs
@@ -178,15 +195,9 @@ setup() {
     export TWK_TIME_FIELD_TASK="Custom.TaskTime"
     export TWK_TIME_FIELD_FEATURE="Custom.FeatureTime"
 
-    local captured_method="" captured_url="" captured_body=""
-    azdo_api_request() {
-        captured_method="$1"
-        captured_url="$2"
-        captured_body="$3"
-        printf '%s' '{"value":[]}'
-    }
-
-    azdo_fetch_sprint_with_details "[10,20]"
+    _capture_api_request
+    azdo_fetch_sprint_with_details "[10,20]" > /dev/null
+    _read_capture
     [[ "${captured_method}" == "POST" ]] || { echo "method: ${captured_method}"; return 1; }
     [[ "${captured_url}" == *"workitemsbatch"* ]] || { echo "url: ${captured_url}"; return 1; }
     [[ "${captured_body}" == *"System.Description"* ]] || { echo "missing description"; return 1; }
@@ -338,17 +349,9 @@ newline'
     export TWK_TIME_FIELD_TASK="Custom.TaskTime"
     export TWK_TIME_FIELD_FEATURE="Custom.FeatureTime"
 
-    local captured_body=""
-    local captured_url=""
-    local captured_method=""
-    azdo_api_request() {
-        captured_method="$1"
-        captured_url="$2"
-        captured_body="$3"
-        printf '%s' '{"value":[]}'
-    }
-
-    azdo_fetch_existing_times "[100,200]"
+    _capture_api_request
+    azdo_fetch_existing_times "[100,200]" > /dev/null
+    _read_capture
     [[ "${captured_method}" == "POST" ]] || { echo "method: ${captured_method}"; return 1; }
     [[ "${captured_url}" == *"workitemsbatch"* ]] || { echo "url: ${captured_url}"; return 1; }
     # Body should include both configured fields plus the standard ones.
@@ -365,13 +368,9 @@ newline'
     export TWK_TIME_FIELD_TASK="Microsoft.VSTS.Scheduling.CompletedWork"
     export TWK_TIME_FIELD_FEATURE="Microsoft.VSTS.Scheduling.CompletedWork"
 
-    local captured_body=""
-    azdo_api_request() {
-        captured_body="$3"
-        printf '%s' '{"value":[]}'
-    }
-
-    azdo_fetch_existing_times "[42]"
+    _capture_api_request
+    azdo_fetch_existing_times "[42]" > /dev/null
+    _read_capture
     # CompletedWork should appear exactly once in the fields array (jq unique).
     local count
     count="$(grep -o "CompletedWork" <<< "${captured_body}" | wc -l)"
@@ -410,8 +409,8 @@ newline'
 
     [[ "${capture_method}" == "PATCH" ]]
     [[ "${capture_url}" == *"/_apis/wit/workitems/100"* ]]
-    [[ "${capture_body}" == *'"path": "/fields/System.State"'* ]]
-    [[ "${capture_body}" == *'"value": "Code Review"'* ]]
+    [[ "${capture_body}" == *'"path":"/fields/System.State"'* ]]
+    [[ "${capture_body}" == *'"value":"Code Review"'* ]]
 }
 
 @test "azdo_update_time_spent: rc=1 on invalid id without calling api_request" {
@@ -429,8 +428,8 @@ newline'
 
     azdo_update_time_spent 100 2.5 Custom.TimeSpent
 
-    [[ "${capture_body}" == *'"path": "/fields/Custom.TimeSpent"'* ]]
-    [[ "${capture_body}" == *'"value": 2.5'* ]]
+    [[ "${capture_body}" == *'"path":"/fields/Custom.TimeSpent"'* ]]
+    [[ "${capture_body}" == *'"value":2.5'* ]]
 }
 
 @test "azdo_update_time_spent: numeric value is unquoted in the JSON body" {
@@ -439,8 +438,8 @@ newline'
     azdo_api_request() { capture_body="$3"; return 0; }
 
     azdo_update_time_spent 100 3 Custom.TimeSpent
-    [[ "${capture_body}" == *'"value": 3'* ]] \
+    [[ "${capture_body}" == *'"value":3'* ]] \
         || { echo "body: ${capture_body}" >&2; return 1; }
     # Crucially no quotes around the value.
-    [[ "${capture_body}" != *'"value": "3"'* ]]
+    [[ "${capture_body}" != *'"value":"3"'* ]]
 }

@@ -5,7 +5,7 @@ readonly REPO_URL="https://github.com/Code-of-The-Forbidden-One/TWAK.git"
 readonly INSTALL_LOCATION="${HOME}/.local/share/twk"
 
 main() {
-    for dep in git curl jq bc; do
+    for dep in git curl jq; do
         if ! command -v "${dep}" &> /dev/null; then
             echo "Error: '${dep}' is required but not found." >&2
             exit 1

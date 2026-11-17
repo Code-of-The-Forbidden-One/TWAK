@@ -13,20 +13,83 @@ Options:
     --global    Write the configuration to ~/.config/twk/config
                 instead of a project-local .twk/config
 
-Prompts for your organisation, project, team, personal access token,
-and the Azure DevOps field names used for time tracking.
+Prompts for your organisation, project, team, how to sign in, and the
+Azure DevOps field names used for time tracking.
+
+Sign-in is either your Azure CLI login (azcli: run 'az login' first;
+nothing secret is stored, and the default when 'az' is installed) or a
+Personal Access Token (pat), stored in the config file.
 
 By default, writes a project-local config to .twk/config in the
-current directory. When twk runs, it walks up from the current
-directory looking for .twk/config; if none is found, it falls back
-to the global config at ~/.config/twk/config.
+current directory, and trusts it (see 'twk trust'). When twk runs, it
+walks up from the current directory looking for .twk/config; if none
+is found, it falls back to the global config at ~/.config/twk/config.
 
-If the project-local config is created inside a git repository,
-twk will append '.twk/' to .gitignore (creating the file if needed)
-to keep your Personal Access Token out of version control.
+If a project-local config holding a PAT is created inside a git
+repository, twk appends '.twk/' to .gitignore (creating the file if
+needed) to keep the token out of version control.
 
 Both files are stored with restrictive permissions (600 file, 700
 directory). Re-run to update your configuration at any time.
+HELP
+            ;;
+        trust)
+            cat <<'HELP'
+twk trust - Approve a project-local .twk/config
+
+Usage:
+    twk trust [-y|--yes]
+
+Options:
+    -y, --yes   Trust without asking (after you have reviewed the file)
+
+twk uses a project-local .twk/config only if 'twk init' wrote it or
+you have approved it with 'twk trust'. A config that arrived some
+other way, such as in a cloned repository, could point your time,
+comments, and state changes at someone else's organisation.
+
+Shows the nearest .twk/config (with any token masked) and asks before
+trusting it. Trust is tied to the file's contents: if it changes, it
+must be trusted again. Records live in ~/.config/twk/trusted.
+
+twk also refuses any config file, local or global, that you do not
+own or that other users can write to.
+HELP
+            ;;
+        doctor)
+            cat <<'HELP'
+twk doctor - Show the active config and check the connection
+
+Usage:
+    twk doctor
+
+Reports the twk and bash versions, which dependencies are installed,
+which config file is in use (and whether it is trusted), its settings
+(never the token itself), where this project's sessions are kept, and
+whether twk can reach Azure DevOps and as whom.
+
+Exits non-zero when something needs fixing.
+HELP
+            ;;
+        add)
+            cat <<'HELP'
+twk add - Add time you forgot to track
+
+Usage:
+    twk add [task] <duration>
+
+Arguments:
+    [task]       Work item ID, partial title, or omit for interactive picker
+    <duration>   1h, 30m, 45s, 1h30m, 1h30m45s, or decimal hours like 2.5h
+
+Adds the duration to the work item's uncommitted time. If the item has
+no session, one is created (already ended) holding just that time.
+Nothing is sent to Azure DevOps until 'twk commit'.
+
+Examples:
+    twk add 12345 1h30m       Add 1h30m to #12345
+    twk add "login bug" 45m   Add 45m to the matching sprint item
+    twk add 2h                Pick the item, then add 2h
 HELP
             ;;
         start)
@@ -617,9 +680,18 @@ Options:
 Pushes accumulated time to the configured time field on each tracked
 work item. The target field depends on the work item type (Task vs
 Feature) as set during 'twk init'. Time is additive - it reads the
-existing value and adds your hours to it. Running sessions are
-skipped; end or pause them first. Committed sessions are archived
-for audit.
+existing value and adds your hours to it, rounded to the nearest
+0.01h. Running sessions are skipped; end or pause them first.
+Committed sessions are archived for audit.
+
+Only sessions tracked against the current organisation and project
+are committed: run it from the project whose config you tracked under.
+
+If the current value cannot be read, nothing is written. If someone
+else changes the work item between the read and the write, the write
+is refused; run 'twk commit' again. If the outcome of a write is
+unknown (for example, the network dropped), the next 'twk commit'
+checks whether it landed before adding anything.
 HELP
             ;;
         *)

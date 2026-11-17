@@ -61,6 +61,91 @@ session_ensure_data_dir() {
     mkdir -p "${TWK_DATA_DIR}"
 }
 
+session_migrate_legacy() {
+    # Before sessions were kept per organisation and project, they all
+    # lived directly in ${TWK_DATA_ROOT}/sessions. Moves them into the
+    # current scope the first time twk runs with a config, and says so.
+    local legacy_dir="${TWK_DATA_ROOT}/sessions"
+    [[ -d "${legacy_dir}" ]] || return 0
+
+    local moved=0 kept=0
+    local f sub target
+    session_ensure_data_dir
+    for f in "${legacy_dir}"/*.session "${legacy_dir}"/*.meta "${legacy_dir}"/*.pending; do
+        [[ -f "${f}" ]] || continue
+        target="${TWK_DATA_DIR}/$(basename "${f}")"
+        if [[ -e "${target}" ]]; then
+            kept=$(( kept + 1 ))
+            continue
+        fi
+        mv "${f}" "${target}"
+        [[ "${f}" == *.session ]] && moved=$(( moved + 1 ))
+    done
+    for sub in committed cancelled; do
+        [[ -d "${legacy_dir}/${sub}" ]] || continue
+        mkdir -p "${TWK_DATA_DIR}/${sub}"
+        for f in "${legacy_dir}/${sub}"/*; do
+            [[ -f "${f}" ]] || continue
+            target="${TWK_DATA_DIR}/${sub}/$(basename "${f}")"
+            if [[ -e "${target}" ]]; then
+                kept=$(( kept + 1 ))
+                continue
+            fi
+            mv "${f}" "${target}"
+        done
+        rmdir "${legacy_dir}/${sub}" 2>/dev/null || true
+    done
+    rmdir "${legacy_dir}" 2>/dev/null || true
+
+    if [[ "${moved}" -gt 0 ]]; then
+        echo "Note: moved ${moved} uncommitted session(s) into the store for ${TWK_ORGANIZATION}/${TWK_PROJECT}." >&2
+        echo "      Sessions are now kept per organisation and project. If any of them" >&2
+        echo "      belong to another project, 'twk cancel' them here and track them there." >&2
+    fi
+    if [[ "${kept}" -gt 0 ]]; then
+        echo "Warning: ${kept} file(s) in ${legacy_dir} clash with existing ones and were left there." >&2
+    fi
+}
+
+readonly SESSION_LOCK_WAIT_TENTHS="${TWK_LOCK_WAIT_TENTHS:-100}"
+
+session_lock() {
+    # A directory is created atomically on every platform, so it serves as
+    # the lock. A lock left by a process that has gone is taken over.
+    session_ensure_data_dir
+    local lock_dir="${TWK_DATA_DIR}/.lock"
+    local waited=0 holder
+
+    until mkdir "${lock_dir}" 2>/dev/null; do
+        holder="$(cat "${lock_dir}/pid" 2>/dev/null || true)"
+        if [[ -n "${holder}" ]] && ! kill -0 "${holder}" 2>/dev/null; then
+            rm -rf "${lock_dir}"
+            continue
+        fi
+        if [[ "${waited}" -ge "${SESSION_LOCK_WAIT_TENTHS}" ]]; then
+            echo "Error: another twk command is changing sessions (lock ${lock_dir})." >&2
+            echo "       If none is running, remove that directory." >&2
+            return 1
+        fi
+        sleep 0.1
+        waited=$(( waited + 1 ))
+    done
+    echo "$$" > "${lock_dir}/pid"
+}
+
+session_unlock() {
+    rm -rf "${TWK_DATA_DIR}/.lock"
+}
+
+session_locked() {
+    # Runs "$@" holding the session lock, and returns its status.
+    session_lock || return 1
+    local rc=0
+    "$@" || rc=$?
+    session_unlock
+    return "${rc}"
+}
+
 session_exists() {
     local work_item_id="$1"
     [[ -f "$(session_file_path "${work_item_id}")" ]]
@@ -277,10 +362,30 @@ apply_state_change() {
         return
     fi
 
-    if azdo_update_state "${work_item_id}" "${new_state}" 2>/dev/null; then
+    if azdo_update_state "${work_item_id}" "${new_state}"; then
         echo "  State set to ${new_state}"
     else
         echo "  Warning: could not set state to ${new_state}" >&2
+    fi
+}
+
+session_start_locked() {
+    local work_item_id="$1"
+
+    local current_state
+    current_state="$(session_read_state "${work_item_id}")"
+
+    if [[ "${current_state}" == "${STATE_RUNNING}" ]]; then
+        echo "Error: work item #${work_item_id} is already running." >&2
+        return 1
+    fi
+
+    if [[ "${current_state}" == "${STATE_PAUSED}" ]]; then
+        session_append "${work_item_id}" "resume"
+        echo "Resumed tracking #${work_item_id}"
+    else
+        session_append "${work_item_id}" "start"
+        echo "Started tracking #${work_item_id}"
     fi
 }
 
@@ -294,25 +399,30 @@ cmd_start() {
     local work_item_id
     work_item_id="$(resolve_work_item "${query}")" || return 1
 
-    local current_state
-    current_state="$(session_read_state "${work_item_id}")"
-
-    if [[ "${current_state}" == "${STATE_RUNNING}" ]]; then
+    if [[ "$(session_read_state "${work_item_id}")" == "${STATE_RUNNING}" ]]; then
         echo "Error: work item #${work_item_id} is already running." >&2
         return 1
     fi
 
     session_cache_meta "${work_item_id}" || true
-
-    if [[ "${current_state}" == "${STATE_PAUSED}" ]]; then
-        session_append "${work_item_id}" "resume"
-        echo "Resumed tracking #${work_item_id}"
-    else
-        session_append "${work_item_id}" "start"
-        echo "Started tracking #${work_item_id}"
-    fi
+    session_locked session_start_locked "${work_item_id}" || return 1
 
     apply_state_change "${work_item_id}" "${target_state}"
+}
+
+session_pause_locked() {
+    local work_item_id="$1"
+
+    if [[ "$(session_read_state "${work_item_id}")" != "${STATE_RUNNING}" ]]; then
+        echo "Error: work item #${work_item_id} is not currently running." >&2
+        return 1
+    fi
+
+    session_append "${work_item_id}" "pause"
+
+    local elapsed_seconds
+    elapsed_seconds="$(session_calculate_elapsed_seconds "${work_item_id}")"
+    echo "Paused #${work_item_id} ($(format_duration "${elapsed_seconds}") tracked)"
 }
 
 cmd_pause() {
@@ -325,32 +435,13 @@ cmd_pause() {
     local work_item_id
     work_item_id="$(resolve_for_session_action "${query}" "${STATE_RUNNING}" "pause")" || return 1
 
-    local current_state
-    current_state="$(session_read_state "${work_item_id}")"
-
-    if [[ "${current_state}" != "${STATE_RUNNING}" ]]; then
-        echo "Error: work item #${work_item_id} is not currently running." >&2
-        return 1
-    fi
-
-    session_append "${work_item_id}" "pause"
-
-    local elapsed_seconds
-    elapsed_seconds="$(session_calculate_elapsed_seconds "${work_item_id}")"
-    echo "Paused #${work_item_id} ($(format_duration "${elapsed_seconds}") tracked)"
+    session_locked session_pause_locked "${work_item_id}" || return 1
 
     apply_state_change "${work_item_id}" "${target_state}"
 }
 
-cmd_end() {
-    config_require
-    local query
-    query="$(parse_query_arg "$@")"
-    local target_state
-    target_state="$(parse_state_flag "$@")"
-
-    local work_item_id
-    work_item_id="$(resolve_for_session_action "${query}" "${STATE_RUNNING}|${STATE_PAUSED}" "end")" || return 1
+session_end_locked() {
+    local work_item_id="$1"
 
     local current_state
     current_state="$(session_read_state "${work_item_id}")"
@@ -370,6 +461,19 @@ cmd_end() {
     local elapsed_seconds
     elapsed_seconds="$(session_calculate_elapsed_seconds "${work_item_id}")"
     echo "Ended #${work_item_id} ($(format_duration "${elapsed_seconds}") total)"
+}
+
+cmd_end() {
+    config_require
+    local query
+    query="$(parse_query_arg "$@")"
+    local target_state
+    target_state="$(parse_state_flag "$@")"
+
+    local work_item_id
+    work_item_id="$(resolve_for_session_action "${query}" "${STATE_RUNNING}|${STATE_PAUSED}" "end")" || return 1
+
+    session_locked session_end_locked "${work_item_id}" || return 1
 
     apply_state_change "${work_item_id}" "${target_state}"
 }
@@ -414,22 +518,20 @@ cmd_reset() {
     local work_item_id
     work_item_id="$(resolve_work_item "${task_query}")" || return 1
 
-    local time_field
-    time_field="$(azdo_resolve_time_field "${work_item_id}")"
-
     local existing_work_item
-    existing_work_item="$(azdo_fetch_work_item "${work_item_id}" 2>/dev/null)" || {
+    existing_work_item="$(azdo_fetch_work_item "${work_item_id}")" || {
         echo "Error: failed to fetch work item #${work_item_id}." >&2
         return 1
     }
 
-    local current_value
-    current_value="$(echo "${existing_work_item}" | jq -r --arg field "${time_field}" '.fields[$field] // 0')"
+    local time_field rev current_value
+    time_field="$(azdo_time_field_for_type \
+        "$(printf '%s' "${existing_work_item}" | jq -r '.fields["System.WorkItemType"] // ""')")"
+    rev="$(printf '%s' "${existing_work_item}" | jq -r '.rev // empty')"
+    current_value="$(printf '%s' "${existing_work_item}" | jq -r --arg field "${time_field}" '.fields[$field] // 0')"
 
-    # Treat any "is-zero" value as already cleared (handles "0", "0.0", "0.00", etc.).
-    local is_zero
-    is_zero="$(echo "${current_value} == 0" | bc -l 2>/dev/null)"
-    if [[ "${is_zero}" == "1" ]]; then
+    # Compared in hundredths, so "0", "0.0" and 0.001 all count as cleared.
+    if [[ "$(hours_to_hundredths "${current_value}")" -eq 0 ]]; then
         echo "#${work_item_id}: ${time_field} is already 0; nothing to reset."
         return
     fi
@@ -450,7 +552,7 @@ cmd_reset() {
         esac
     fi
 
-    if azdo_update_time_spent "${work_item_id}" "0" "${time_field}" > /dev/null 2>&1; then
+    if azdo_update_time_spent "${work_item_id}" "0" "${time_field}" "${rev}" > /dev/null; then
         echo "Reset #${work_item_id} (was ${current_value}h, now 0h)"
     else
         echo "Error: failed to reset #${work_item_id} on Azure DevOps." >&2
@@ -512,7 +614,7 @@ cmd_assign() {
         return 1
     fi
 
-    if azdo_update_assigned_to "${work_item_id}" "${user}" > /dev/null 2>&1; then
+    if azdo_update_assigned_to "${work_item_id}" "${user}" > /dev/null; then
         echo "Assigned #${work_item_id} to ${user}"
     else
         echo "Error: failed to assign #${work_item_id} to ${user}." >&2
@@ -520,6 +622,49 @@ cmd_assign() {
         echo "       recognised in this Azure DevOps organisation." >&2
         return 1
     fi
+}
+
+session_adjust_locked() {
+    # Appends an adjust event for <op> (add|subtract|set) of <seconds>.
+    local work_item_id="$1"
+    local op="$2"
+    local seconds="$3"
+
+    if ! session_exists "${work_item_id}"; then
+        echo "Error: no session for work item #${work_item_id}." >&2
+        return 1
+    fi
+
+    local current_seconds
+    current_seconds="$(session_calculate_elapsed_seconds "${work_item_id}")"
+
+    local delta
+    case "${op}" in
+        add)      delta="${seconds}" ;;
+        subtract) delta=$(( -seconds )) ;;
+        set)      delta=$(( seconds - current_seconds )) ;;
+    esac
+
+    local new_total=$(( current_seconds + delta ))
+    if [[ "${new_total}" -lt 0 ]]; then
+        echo "Error: adjustment would result in negative elapsed time." >&2
+        echo "       Current: $(format_duration "${current_seconds}"); requested delta: ${delta}s." >&2
+        return 1
+    fi
+
+    echo "adjust|${delta}" >> "$(session_file_path "${work_item_id}")"
+
+    local diff_str
+    if [[ "${delta}" -ge 0 ]]; then
+        diff_str="+$(format_duration "${delta}")"
+    else
+        diff_str="-$(format_duration "$(( -delta ))")"
+    fi
+
+    echo "Adjusted #${work_item_id}:"
+    echo "  Was:  $(format_duration "${current_seconds}")"
+    echo "  Now:  $(format_duration "${new_total}")"
+    echo "  Diff: ${diff_str}"
 }
 
 cmd_adjust() {
@@ -595,37 +740,61 @@ cmd_adjust() {
         return 1
     fi
 
-    local current_seconds
-    current_seconds="$(session_calculate_elapsed_seconds "${work_item_id}")"
+    session_locked session_adjust_locked "${work_item_id}" "${op}" "${seconds}"
+}
 
-    local delta
-    case "${op}" in
-        add)      delta="${seconds}" ;;
-        subtract) delta=$(( -seconds )) ;;
-        set)      delta=$(( seconds - current_seconds )) ;;
-    esac
+session_add_locked() {
+    # Adds <seconds> to a work item's uncommitted time, creating an ended
+    # session when there is none, so the time goes out on the next commit.
+    local work_item_id="$1"
+    local seconds="$2"
 
-    local new_total=$(( current_seconds + delta ))
-    if [[ "${new_total}" -lt 0 ]]; then
-        echo "Error: adjustment would result in negative elapsed time." >&2
-        echo "       Current: $(format_duration "${current_seconds}"); requested delta: ${delta}s." >&2
+    local session_file now
+    session_file="$(session_file_path "${work_item_id}")" || return 1
+    if [[ ! -f "${session_file}" ]]; then
+        now="$(date +%s)"
+        session_ensure_data_dir
+        printf 'start|%s\nend|%s\n' "${now}" "${now}" > "${session_file}"
+    fi
+    echo "adjust|${seconds}" >> "${session_file}"
+
+    echo "Added $(format_duration "${seconds}") to #${work_item_id} ($(format_duration \
+        "$(session_calculate_elapsed_seconds "${work_item_id}")") uncommitted)."
+    echo "Run 'twk commit' to push it to Azure DevOps."
+}
+
+cmd_add() {
+    config_require
+
+    if [[ $# -gt 2 ]]; then
+        echo "Error: too many arguments." >&2
+        echo "Usage: twk add [task] <duration>" >&2
         return 1
     fi
 
-    session_ensure_data_dir
-    echo "adjust|${delta}" >> "$(session_file_path "${work_item_id}")"
+    local task_query="" amount=""
+    case $# in
+        0)
+            echo "Error: a duration is required (e.g. 30m, 1h30m, 2.5h)." >&2
+            echo "Usage: twk add [task] <duration>" >&2
+            return 1
+            ;;
+        1) amount="$1" ;;
+        2) task_query="$1"; amount="$2" ;;
+    esac
 
-    local diff_str
-    if [[ "${delta}" -ge 0 ]]; then
-        diff_str="+$(format_duration "${delta}")"
-    else
-        diff_str="-$(format_duration "$(( -delta ))")"
+    local seconds
+    if ! seconds="$(parse_duration "${amount}")" || [[ "${seconds}" -le 0 ]]; then
+        echo "Error: invalid duration '${amount}'." >&2
+        echo "       Valid: 1h, 30m, 45s, 1h30m, 1h30m45s, 2.5h" >&2
+        return 1
     fi
 
-    echo "Adjusted #${work_item_id}:"
-    echo "  Was:  $(format_duration "${current_seconds}")"
-    echo "  Now:  $(format_duration "${new_total}")"
-    echo "  Diff: ${diff_str}"
+    local work_item_id
+    work_item_id="$(resolve_work_item "${task_query}")" || return 1
+
+    session_cache_meta "${work_item_id}" || true
+    session_locked session_add_locked "${work_item_id}" "${seconds}"
 }
 
 cmd_pull() {
@@ -680,15 +849,8 @@ cmd_pull() {
     echo "Done: ${refreshed} refreshed, ${failed} failed."
 }
 
-cmd_cancel() {
-    config_require
-    local query
-    query="$(parse_query_arg "$@")"
-    local target_state
-    target_state="$(parse_state_flag "$@")"
-
-    local work_item_id
-    work_item_id="$(resolve_for_session_action "${query}" "${STATE_RUNNING}|${STATE_PAUSED}|${STATE_ENDED}" "cancel")" || return 1
+session_cancel_locked() {
+    local work_item_id="$1"
 
     if ! session_exists "${work_item_id}"; then
         echo "Error: no session for work item #${work_item_id}." >&2
@@ -700,11 +862,9 @@ cmd_cancel() {
 
     session_mark_cancelled "${work_item_id}"
     echo "Cancelled #${work_item_id} ($(format_duration "${elapsed_seconds}") discarded)"
-
-    apply_state_change "${work_item_id}" "${target_state}"
 }
 
-cmd_undo() {
+cmd_cancel() {
     config_require
     local query
     query="$(parse_query_arg "$@")"
@@ -712,7 +872,15 @@ cmd_undo() {
     target_state="$(parse_state_flag "$@")"
 
     local work_item_id
-    work_item_id="$(resolve_for_session_action "${query}" "${STATE_RUNNING}|${STATE_PAUSED}|${STATE_ENDED}" "undo")" || return 1
+    work_item_id="$(resolve_for_session_action "${query}" "${STATE_RUNNING}|${STATE_PAUSED}|${STATE_ENDED}" "cancel")" || return 1
+
+    session_locked session_cancel_locked "${work_item_id}" || return 1
+
+    apply_state_change "${work_item_id}" "${target_state}"
+}
+
+session_undo_locked() {
+    local work_item_id="$1"
 
     if ! session_exists "${work_item_id}"; then
         echo "Error: no session for work item #${work_item_id}." >&2
@@ -737,6 +905,19 @@ cmd_undo() {
     else
         echo "Undid '${popped_event}' on #${work_item_id} (session removed)"
     fi
+}
+
+cmd_undo() {
+    config_require
+    local query
+    query="$(parse_query_arg "$@")"
+    local target_state
+    target_state="$(parse_state_flag "$@")"
+
+    local work_item_id
+    work_item_id="$(resolve_for_session_action "${query}" "${STATE_RUNNING}|${STATE_PAUSED}|${STATE_ENDED}" "undo")" || return 1
+
+    session_locked session_undo_locked "${work_item_id}" || return 1
 
     apply_state_change "${work_item_id}" "${target_state}"
 }

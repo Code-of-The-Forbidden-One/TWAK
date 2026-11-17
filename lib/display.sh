@@ -7,9 +7,43 @@ format_duration() {
     printf "%02d:%02d:%02d" "${hours}" "${minutes}" "${seconds}"
 }
 
+# Hours are handled as integer hundredths of an hour ("cents"), rounded
+# to the nearest, and printed with a leading zero ("0.50", never ".50":
+# the value goes into JSON, where ".50" is not a number).
+
+seconds_to_hundredths() {
+    local total_seconds="$1"
+    echo $(( (total_seconds * 100 + 1800) / 3600 ))
+}
+
+hundredths_to_hours() {
+    local hundredths="$1"
+    local sign=""
+    if [[ "${hundredths}" -lt 0 ]]; then
+        sign="-"
+        hundredths=$(( -hundredths ))
+    fi
+    printf '%s%d.%02d' "${sign}" $(( hundredths / 100 )) $(( hundredths % 100 ))
+}
+
+hours_to_hundredths() {
+    # Converts an hours value from Azure DevOps (4, 4.2, "1.5", null) to
+    # hundredths, rounded. Anything unreadable counts as 0.
+    local hours="${1:-0}"
+    jq -n --arg h "${hours}" '(($h | tonumber?) // 0) * 100 | round'
+}
+
 seconds_to_hours() {
     local total_seconds="$1"
-    echo "scale=2; ${total_seconds} / 3600" | bc
+    hundredths_to_hours "$(seconds_to_hundredths "${total_seconds}")"
+}
+
+format_epoch() {
+    # "YYYY-MM-DD HH:MM" for an epoch, with GNU date or BSD/macOS date.
+    local epoch="$1"
+    date -d "@${epoch}" +"%Y-%m-%d %H:%M" 2>/dev/null \
+        || date -r "${epoch}" +"%Y-%m-%d %H:%M" 2>/dev/null \
+        || echo "?"
 }
 
 parse_duration() {
@@ -26,7 +60,7 @@ parse_duration() {
     # Decimal hours is its own special form.
     if [[ "${input}" =~ ^[0-9]+\.[0-9]+h$ ]]; then
         local h="${input%h}"
-        echo "scale=0; ${h} * 3600 / 1" | bc
+        jq -n --arg h "${h}" '($h | tonumber) * 3600 | floor'
         return 0
     fi
 
@@ -38,13 +72,13 @@ parse_duration() {
     # Each anchor used at most once. Empty match → 0.
     local total=0
     if [[ "${input}" =~ ([0-9]+)h ]]; then
-        total=$(( total + ${BASH_REMATCH[1]} * 3600 ))
+        total=$(( total + BASH_REMATCH[1] * 3600 ))
     fi
     if [[ "${input}" =~ ([0-9]+)m ]]; then
-        total=$(( total + ${BASH_REMATCH[1]} * 60 ))
+        total=$(( total + BASH_REMATCH[1] * 60 ))
     fi
     if [[ "${input}" =~ ([0-9]+)s ]]; then
-        total=$(( total + ${BASH_REMATCH[1]} ))
+        total=$(( total + BASH_REMATCH[1] ))
     fi
 
     echo "${total}"
@@ -174,7 +208,7 @@ normalise_description() {
 render_list_row() {
     local item_json="$1"
 
-    local id title type state priority est done assigned
+    local id title type state priority est done_hours assigned
     id="$(echo "${item_json}"          | jq -r '.id')"
     title="$(echo "${item_json}"       | jq -r '.fields["System.Title"] // ""')"
     type="$(echo "${item_json}"        | jq -r '.fields["System.WorkItemType"] // ""')"
@@ -188,8 +222,8 @@ render_list_row() {
         Feature) time_field="${TWK_TIME_FIELD_FEATURE}" ;;
         *)       time_field="${TWK_TIME_FIELD_TASK}" ;;
     esac
-    done="$(echo "${item_json}" | jq -r --arg f "${time_field}" '.fields[$f] // empty')"
-    [[ -z "${done}" ]] && done="-" || done="${done}h"
+    done_hours="$(echo "${item_json}" | jq -r --arg f "${time_field}" '.fields[$f] // empty')"
+    [[ -z "${done_hours}" ]] && done_hours="-" || done_hours="${done_hours}h"
 
     # System.AssignedTo is an object {displayName, uniqueName, ...} when set,
     # null/missing when unassigned. The `?` suppresses errors for the legacy
@@ -202,7 +236,7 @@ render_list_row() {
         "${state}" \
         "${priority}" \
         "${est}" \
-        "${done}" \
+        "${done_hours}" \
         "$(truncate_title "${assigned}" "${LIST_ASSIGNED_WIDTH}")"
 }
 
@@ -413,7 +447,7 @@ cmd_list() {
 render_show_item() {
     local item_json="$1"
 
-    local id title type state priority est done assigned iteration description
+    local id title type state priority est done_hours assigned iteration description
     id="$(echo "${item_json}"          | jq -r '.id')"
     title="$(echo "${item_json}"       | jq -r '.fields["System.Title"] // ""')"
     type="$(echo "${item_json}"        | jq -r '.fields["System.WorkItemType"] // ""')"
@@ -428,8 +462,8 @@ render_show_item() {
         Feature) time_field="${TWK_TIME_FIELD_FEATURE}" ;;
         *)       time_field="${TWK_TIME_FIELD_TASK}" ;;
     esac
-    done="$(echo "${item_json}" | jq -r --arg f "${time_field}" '.fields[$f] // empty')"
-    [[ -z "${done}" ]] && done="-" || done="${done}h"
+    done_hours="$(echo "${item_json}" | jq -r --arg f "${time_field}" '.fields[$f] // empty')"
+    [[ -z "${done_hours}" ]] && done_hours="-" || done_hours="${done_hours}h"
 
     assigned="$(echo "${item_json}"  | jq -r '.fields["System.AssignedTo"].displayName? // "-"')"
     iteration="$(echo "${item_json}" | jq -r '.fields["System.IterationPath"] // "-"')"
@@ -449,7 +483,7 @@ render_show_item() {
     printf "  Priority:   %s\n" "${priority}"
     printf "  Assigned:   %s\n" "${assigned}"
     printf "  Estimate:   %s\n" "${est}"
-    printf "  Done:       %s\n" "${done}"
+    printf "  Done:       %s\n" "${done_hours}"
     printf "  Iteration:  %s\n" "${iteration}"
     echo ""
     echo "Description:"
@@ -481,7 +515,7 @@ cmd_users() {
     if [[ "${all}" == true ]]; then
         heading="Users in the Azure DevOps organisation:"
         local response
-        response="$(azdo_fetch_org_users 2>/dev/null)" || {
+        response="$(azdo_fetch_org_users)" || {
             echo "Error: could not query org-wide users from Azure DevOps." >&2
             echo "       The Graph API needs 'Graph (Read)' scope on your PAT, in" >&2
             echo "       addition to 'Work Items (Read & Write)'. Regenerate your" >&2
@@ -559,7 +593,7 @@ render_discussion() {
     local work_item_id="$1"
 
     local response
-    response="$(azdo_fetch_comments "${work_item_id}" 2>/dev/null)" || {
+    response="$(azdo_fetch_comments "${work_item_id}")" || {
         echo "Discussion: (could not fetch comments — check PAT and connectivity)"
         return
     }
@@ -666,7 +700,7 @@ EOF
     fi
 
     local response
-    response="$(azdo_post_comment "${work_item_id}" "${text}" 2>/dev/null)" || {
+    response="$(azdo_post_comment "${work_item_id}" "${text}")" || {
         echo "Error: failed to post comment on #${work_item_id}." >&2
         return 1
     }
@@ -744,6 +778,10 @@ cmd_log() {
         esac
     done
 
+    # Reads only local files, but needs the config to know which
+    # organisation's and project's history to show.
+    config_require
+
     local committed_dir="${TWK_DATA_DIR}/committed"
     if [[ ! -d "${committed_dir}" ]]; then
         echo "No commits yet."
@@ -774,7 +812,7 @@ cmd_log() {
         fi
 
         elapsed_seconds="$(session_elapsed_from_path "${f}")"
-        datetime_str="$(date -d "@${ts}" +"%Y-%m-%d %H:%M" 2>/dev/null || echo "?")"
+        datetime_str="$(format_epoch "${ts}")"
 
         title=""
         meta_file="${committed_dir}/${id}_${ts}.meta"
@@ -916,6 +954,7 @@ cmd_status() {
     local total_combined=0
     local work_item_id state elapsed_seconds hours_decimal title
     local existing existing_display total_display
+    local existing_hundredths tracked_hundredths
 
     while read -r session_file; do
         work_item_id="$(session_work_item_id_from_path "${session_file}")"
@@ -938,10 +977,12 @@ cmd_status() {
             else
                 # Normalise to 2dp so a JSON value like 4.2 renders as 4.20h,
                 # matching the formatting of tracked/total columns.
-                existing_display="$(echo "scale=2; ${existing} / 1" | bc)h"
-                total_display="$(echo "scale=2; ${existing} + ${hours_decimal}" | bc)h"
-                total_existing="$(echo "scale=2; ${total_existing} + ${existing}" | bc)"
-                total_combined="$(echo "scale=2; ${total_combined} + ${existing} + ${hours_decimal}" | bc)"
+                existing_hundredths="$(hours_to_hundredths "${existing}")"
+                tracked_hundredths="$(seconds_to_hundredths "${elapsed_seconds}")"
+                existing_display="$(hundredths_to_hours "${existing_hundredths}")h"
+                total_display="$(hundredths_to_hours $(( existing_hundredths + tracked_hundredths )))h"
+                total_existing=$(( total_existing + existing_hundredths ))
+                total_combined=$(( total_combined + existing_hundredths + tracked_hundredths ))
             fi
             printf "  #%-7s %-${STATUS_TITLE_WIDTH}s %-10s %-12s %-8s %-8s %s\n" \
                 "${work_item_id}" \
@@ -967,8 +1008,8 @@ cmd_status() {
             "Total" "" "" \
             "$(format_duration "${total_seconds}")" \
             "$(seconds_to_hours "${total_seconds}")h" \
-            "${total_existing}h" \
-            "${total_combined}h"
+            "$(hundredths_to_hours "${total_existing}")h" \
+            "$(hundredths_to_hours "${total_combined}")h"
     else
         printf "  %-8s %-${STATUS_TITLE_WIDTH}s %-10s %-12s %sh\n" \
             "Total" "" "" \
@@ -976,6 +1017,97 @@ cmd_status() {
             "$(seconds_to_hours "${total_seconds}")"
     fi
     } | twk_pager
+}
+
+commit_pending_path() {
+    local work_item_id="$1"
+    echo "${TWK_DATA_DIR}/${work_item_id}.pending"
+}
+
+commit_one_locked() {
+    # Commits one session. Echoes one line of output. Returns:
+    #   0 committed (or would be, on a dry run); 1 failed; 3 skipped.
+    # Prints the tracked hundredths on fd 3 for the dry-run total.
+    local work_item_id="$1"
+    local dry_run="$2"
+
+    if [[ "$(session_read_state "${work_item_id}")" == "${STATE_RUNNING}" ]]; then
+        echo "  #${work_item_id}: skipped (still running - end or pause first)"
+        return 3
+    fi
+
+    local elapsed_seconds new_hundredths
+    elapsed_seconds="$(session_calculate_elapsed_seconds "${work_item_id}")"
+    new_hundredths="$(seconds_to_hundredths "${elapsed_seconds}")"
+
+    # Never write without the current value: a failed read must not be
+    # taken as zero, or the commit would overwrite the hours already there.
+    local work_item
+    if ! work_item="$(azdo_fetch_work_item "${work_item_id}")" || [[ -z "${work_item}" ]]; then
+        echo "  #${work_item_id}: failed (could not read the current hours; nothing was written)" >&2
+        return 1
+    fi
+
+    local time_field rev existing_hundredths
+    time_field="$(azdo_time_field_for_type \
+        "$(printf '%s' "${work_item}" | jq -r '.fields["System.WorkItemType"] // ""')")"
+    rev="$(printf '%s' "${work_item}" | jq -r '.rev // empty')"
+    existing_hundredths="$(hours_to_hundredths \
+        "$(printf '%s' "${work_item}" | jq -r --arg f "${time_field}" '.fields[$f] // 0')")"
+
+    # A previous commit whose response was lost leaves a pending record.
+    # If the work item has since moved on and holds exactly the total
+    # that commit wrote, it landed: archive the session, don't add again.
+    local pending_file
+    pending_file="$(commit_pending_path "${work_item_id}")"
+    if [[ -f "${pending_file}" ]]; then
+        local pending_rev pending_total
+        read -r pending_rev pending_total < "${pending_file}" || true
+        if [[ "${pending_rev}" =~ ^[0-9]+$ ]] && [[ "${pending_total}" =~ ^[0-9]+$ ]] \
+            && [[ -n "${rev}" ]] && [[ "${rev}" -gt "${pending_rev}" ]] \
+            && [[ "${existing_hundredths}" -eq "${pending_total}" ]]; then
+            if [[ "${dry_run}" == true ]]; then
+                echo "  #${work_item_id}: already committed by an earlier run; would be archived"
+                return 3
+            fi
+            session_mark_committed "${work_item_id}"
+            rm -f "${pending_file}"
+            echo "  #${work_item_id}: already committed by an earlier run (total: $(hundredths_to_hours "${pending_total}")h); archived"
+            return 0
+        fi
+        [[ "${dry_run}" == true ]] || rm -f "${pending_file}"
+    fi
+
+    local total_hundredths=$(( existing_hundredths + new_hundredths ))
+    local new_hours existing_hours total_hours
+    new_hours="$(hundredths_to_hours "${new_hundredths}")"
+    existing_hours="$(hundredths_to_hours "${existing_hundredths}")"
+    total_hours="$(hundredths_to_hours "${total_hundredths}")"
+
+    if [[ "${dry_run}" == true ]]; then
+        echo "  #${work_item_id}: would commit ${new_hours}h (existing ${existing_hours}h → total ${total_hours}h)"
+        echo "${new_hundredths}" >&3
+        return 0
+    fi
+
+    printf '%s %s\n' "${rev:-0}" "${total_hundredths}" > "${pending_file}"
+
+    local rc=0
+    azdo_update_time_spent "${work_item_id}" "${total_hours}" "${time_field}" "${rev}" > /dev/null || rc=$?
+    if [[ "${rc}" -eq 0 ]]; then
+        session_mark_committed "${work_item_id}"
+        rm -f "${pending_file}"
+        echo "  #${work_item_id}: committed ${new_hours}h (total: ${total_hours}h)"
+        return 0
+    fi
+
+    if [[ "${rc}" -eq "${AZDO_RC_UNKNOWN}" ]]; then
+        echo "  #${work_item_id}: outcome unknown; run 'twk commit' again to check and finish" >&2
+    else
+        rm -f "${pending_file}"
+        echo "  #${work_item_id}: failed to update Azure DevOps (nothing was written)" >&2
+    fi
+    return 1
 }
 
 cmd_commit() {
@@ -1011,57 +1143,31 @@ cmd_commit() {
 
     local success_count=0
     local failure_count=0
-    local would_hours_total=0
-    local work_item_id current_state elapsed_seconds new_hours
-    local existing_work_item existing_hours total_hours time_field
+    local would_hundredths_total=0
+    local tracked_file
+    tracked_file="$(mktemp)"
 
+    local session_file work_item_id rc
     while read -r session_file; do
         work_item_id="$(session_work_item_id_from_path "${session_file}")"
-        current_state="$(session_read_state "${work_item_id}")"
-
-        if [[ "${current_state}" == "${STATE_RUNNING}" ]]; then
-            echo "  #${work_item_id}: skipped (still running - end or pause first)"
-            failure_count=$(( failure_count + 1 ))
-            continue
-        fi
-
-        elapsed_seconds="$(session_calculate_elapsed_seconds "${work_item_id}")"
-        new_hours="$(seconds_to_hours "${elapsed_seconds}")"
-
-        time_field="$(azdo_resolve_time_field "${work_item_id}")"
-
-        existing_work_item="$(azdo_fetch_work_item "${work_item_id}" 2>/dev/null)"
-
-        existing_hours=0
-        if [[ -n "${existing_work_item}" ]]; then
-            existing_hours="$(echo "${existing_work_item}" | jq -r --arg field "${time_field}" '.fields[$field] // 0')"
-        fi
-
-        total_hours="$(echo "scale=2; ${existing_hours} + ${new_hours}" | bc)"
-
-        if [[ "${dry_run}" == true ]]; then
-            # Normalise existing to 2dp so it lines up with the tracked/total
-            # columns (e.g. JSON 1 → "1.00", JSON 4.2 → "4.20").
-            local existing_hours_fmt
-            existing_hours_fmt="$(echo "scale=2; ${existing_hours} / 1" | bc)"
-            echo "  #${work_item_id}: would commit ${new_hours}h (existing ${existing_hours_fmt}h → total ${total_hours}h)"
+        rc=0
+        session_locked commit_one_locked "${work_item_id}" "${dry_run}" 3>> "${tracked_file}" || rc=$?
+        if [[ "${rc}" -eq 0 ]]; then
             success_count=$(( success_count + 1 ))
-            would_hours_total="$(echo "scale=2; ${would_hours_total} + ${new_hours}" | bc)"
         else
-            if azdo_update_time_spent "${work_item_id}" "${total_hours}" "${time_field}" > /dev/null 2>&1; then
-                session_mark_committed "${work_item_id}"
-                echo "  #${work_item_id}: committed ${new_hours}h (total: ${total_hours}h)"
-                success_count=$(( success_count + 1 ))
-            else
-                echo "  #${work_item_id}: failed to update Azure DevOps" >&2
-                failure_count=$(( failure_count + 1 ))
-            fi
+            failure_count=$(( failure_count + 1 ))
         fi
     done <<< "${session_files}"
 
+    local hundredths
+    while read -r hundredths; do
+        [[ -n "${hundredths}" ]] && would_hundredths_total=$(( would_hundredths_total + hundredths ))
+    done < "${tracked_file}"
+    rm -f "${tracked_file}"
+
     echo ""
     if [[ "${dry_run}" == true ]]; then
-        echo "Would commit ${would_hours_total}h across ${success_count} session$( (( success_count != 1 )) && echo s ), skipping ${failure_count}."
+        echo "Would commit $(hundredths_to_hours "${would_hundredths_total}")h across ${success_count} session$( (( success_count != 1 )) && echo s ), skipping ${failure_count}."
         echo "(no changes were sent to Azure DevOps; sessions remain uncommitted)"
     else
         echo "Done: ${success_count} committed, ${failure_count} failed/skipped."

@@ -807,7 +807,7 @@ setup() {
 @test "cmd_reset: errors when work item fetch fails" {
     twk_write_fake_config
 
-    azdo_resolve_time_field() { echo "Custom.TaskTime"; }
+    azdo_time_field_for_type() { echo "Custom.TaskTime"; }
     azdo_fetch_work_item() { return 1; }
 
     run cmd_reset 12345 --yes
@@ -817,10 +817,9 @@ setup() {
 
 @test "cmd_reset: --yes skips prompt and PATCHes 0 to the configured field" {
     require_binary jq
-    require_binary bc
     twk_write_fake_config
 
-    azdo_resolve_time_field() { echo "Custom.TaskTime"; }
+    azdo_time_field_for_type() { echo "Custom.TaskTime"; }
     azdo_fetch_work_item() {
         printf '%s' '{"id":12345,"fields":{"Custom.TaskTime":4.2}}'
     }
@@ -846,10 +845,9 @@ setup() {
 
 @test "cmd_reset: short form -y also skips the prompt" {
     require_binary jq
-    require_binary bc
     twk_write_fake_config
 
-    azdo_resolve_time_field() { echo "Custom.TaskTime"; }
+    azdo_time_field_for_type() { echo "Custom.TaskTime"; }
     azdo_fetch_work_item() { printf '%s' '{"id":12345,"fields":{"Custom.TaskTime":1.5}}'; }
     azdo_update_time_spent() { return 0; }
 
@@ -860,10 +858,9 @@ setup() {
 
 @test "cmd_reset: prompt 'y' confirms and PATCHes" {
     require_binary jq
-    require_binary bc
     twk_write_fake_config
 
-    azdo_resolve_time_field() { echo "Custom.TaskTime"; }
+    azdo_time_field_for_type() { echo "Custom.TaskTime"; }
     azdo_fetch_work_item() { printf '%s' '{"id":12345,"fields":{"Custom.TaskTime":2.0}}'; }
     azdo_update_time_spent() { return 0; }
 
@@ -880,7 +877,7 @@ setup() {
         source '${TWK_REPO}/lib/display.sh'
         export TWK_DATA_DIR='${TWK_DATA_DIR}'
         export TWK_CONFIG_DIR='${TWK_CONFIG_DIR}'
-        azdo_resolve_time_field() { echo 'Custom.TaskTime'; }
+        azdo_time_field_for_type() { echo 'Custom.TaskTime'; }
         azdo_fetch_work_item() { printf '%s' '{\"id\":12345,\"fields\":{\"Custom.TaskTime\":2.0}}'; }
         azdo_update_time_spent() { printf 'PATCH %s = %s' \"\$1\" \"\$2\" > '${cap_patch}'; }
         echo y | cmd_reset 12345
@@ -893,10 +890,9 @@ setup() {
 
 @test "cmd_reset: prompt 'n' (or empty) cancels and does NOT PATCH" {
     require_binary jq
-    require_binary bc
     twk_write_fake_config
 
-    azdo_resolve_time_field() { echo "Custom.TaskTime"; }
+    azdo_time_field_for_type() { echo "Custom.TaskTime"; }
     azdo_fetch_work_item() { printf '%s' '{"id":12345,"fields":{"Custom.TaskTime":2.0}}'; }
 
     local patched=false
@@ -910,7 +906,7 @@ setup() {
         source '${TWK_REPO}/lib/display.sh'
         export TWK_DATA_DIR='${TWK_DATA_DIR}'
         export TWK_CONFIG_DIR='${TWK_CONFIG_DIR}'
-        azdo_resolve_time_field() { echo 'Custom.TaskTime'; }
+        azdo_time_field_for_type() { echo 'Custom.TaskTime'; }
         azdo_fetch_work_item() { printf '%s' '{\"id\":12345,\"fields\":{\"Custom.TaskTime\":2.0}}'; }
         azdo_update_time_spent() { echo 'PATCH FIRED'; }
         echo n | cmd_reset 12345
@@ -922,7 +918,6 @@ setup() {
 
 @test "cmd_reset: empty response cancels (default N)" {
     require_binary jq
-    require_binary bc
     twk_write_fake_config
 
     run bash -c "
@@ -933,7 +928,7 @@ setup() {
         source '${TWK_REPO}/lib/display.sh'
         export TWK_DATA_DIR='${TWK_DATA_DIR}'
         export TWK_CONFIG_DIR='${TWK_CONFIG_DIR}'
-        azdo_resolve_time_field() { echo 'Custom.TaskTime'; }
+        azdo_time_field_for_type() { echo 'Custom.TaskTime'; }
         azdo_fetch_work_item() { printf '%s' '{\"id\":12345,\"fields\":{\"Custom.TaskTime\":1.0}}'; }
         azdo_update_time_spent() { echo 'PATCH FIRED'; }
         echo '' | cmd_reset 12345
@@ -945,10 +940,9 @@ setup() {
 
 @test "cmd_reset: no-ops when current value is already 0" {
     require_binary jq
-    require_binary bc
     twk_write_fake_config
 
-    azdo_resolve_time_field() { echo "Custom.TaskTime"; }
+    azdo_time_field_for_type() { echo "Custom.TaskTime"; }
     azdo_fetch_work_item() { printf '%s' '{"id":12345,"fields":{"Custom.TaskTime":0}}'; }
 
     local patched=false
@@ -962,10 +956,9 @@ setup() {
 
 @test "cmd_reset: handles missing field (treated as 0, no-ops)" {
     require_binary jq
-    require_binary bc
     twk_write_fake_config
 
-    azdo_resolve_time_field() { echo "Custom.TaskTime"; }
+    azdo_time_field_for_type() { echo "Custom.TaskTime"; }
     azdo_fetch_work_item() { printf '%s' '{"id":12345,"fields":{}}'; }
 
     local patched=false
@@ -979,10 +972,9 @@ setup() {
 
 @test "cmd_reset: reports failure when AzDO PATCH fails" {
     require_binary jq
-    require_binary bc
     twk_write_fake_config
 
-    azdo_resolve_time_field() { echo "Custom.TaskTime"; }
+    azdo_time_field_for_type() { echo "Custom.TaskTime"; }
     azdo_fetch_work_item() { printf '%s' '{"id":12345,"fields":{"Custom.TaskTime":3.5}}'; }
     azdo_update_time_spent() { return 1; }
 

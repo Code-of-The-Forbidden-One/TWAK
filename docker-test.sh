@@ -37,8 +37,8 @@ else
     container_command='exec bash'
 fi
 
-# bats: run the test suite. python3: stub fallback for jq/bc when those aren't
-# present. Real jq/bc are installed too and win over the stubs.
+# bats: run the test suite. python3: stub fallback for jq when it isn't
+# present. Real jq is installed too and wins over the stub. procps: kill -0.
 docker run --rm -it \
     -v "$PWD:/twk:ro" \
     -v "${CONFIG_VOLUME}:/root/.config/twk" \
@@ -46,7 +46,7 @@ docker run --rm -it \
     -w /twk \
     debian:bookworm-slim \
     bash -c "apt-get update -qq \
-        && apt-get install -y -qq curl jq bc less fzf vim git bats python3 >/dev/null \
+        && apt-get install -y -qq curl jq less fzf vim git bats python3 procps >/dev/null \
         && ln -sf /twk/bin/twk /usr/local/bin/twk \
         && echo \"[docker-test] Config and session data persist in named volumes (${CONFIG_VOLUME}, ${DATA_VOLUME}).\" \
         && echo \"[docker-test] Run 'docker volume rm ${CONFIG_VOLUME} ${DATA_VOLUME}' on the host to reset state.\" \

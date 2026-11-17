@@ -51,8 +51,8 @@ setup() {
 }
 
 # -----------------------------------------------------------------------------
-# seconds_to_hours — bc-driven division. Skip if bc isn't around (the
-# stubs/bc fallback handles it, but we set up that fallback in setup()).
+# seconds_to_hours — rounded to the nearest hundredth, always with a
+# leading zero (the value goes into a JSON body, where ".50" is invalid).
 # -----------------------------------------------------------------------------
 
 @test "seconds_to_hours: 3600 seconds is 1.00" {
@@ -61,30 +61,58 @@ setup() {
     [[ "${output}" == "1.00" ]] || { echo "got: ${output}" >&2; return 1; }
 }
 
-@test "seconds_to_hours: 1800 seconds is .50 (bc strips leading zero)" {
+@test "seconds_to_hours: 1800 seconds is 0.50, with a leading zero" {
     run seconds_to_hours 1800
     assert_status 0
-    # bc renders 0.5 as ".50" with scale=2.
-    [[ "${output}" == ".50" ]] || { echo "got: ${output}" >&2; return 1; }
+    [[ "${output}" == "0.50" ]] || { echo "got: ${output}" >&2; return 1; }
 }
 
-@test "seconds_to_hours: 0 seconds is 0" {
+@test "seconds_to_hours: 0 seconds is 0.00" {
     run seconds_to_hours 0
     assert_status 0
-    [[ "${output}" == "0" || "${output}" == "0.00" || "${output}" == ".00" ]] \
-        || { echo "got: ${output}" >&2; return 1; }
+    [[ "${output}" == "0.00" ]] || { echo "got: ${output}" >&2; return 1; }
 }
 
-# Regression test for round-2 review #9: the bc stub historically used
-# banker's rounding (ROUND_HALF_EVEN); real bc with `scale=2` truncates.
-# 5/3 = 1.666… — real bc and ROUND_DOWN both yield "1.66"; banker's-round
-# would have given "1.67". Lock in the truncating behaviour either way.
-@test "bc stub (or real bc) truncates rather than banker's-rounds at scale=2" {
-    require_binary bc
-    local out
-    out="$(echo 'scale=2; 5/3' | bc)"
-    [[ "${out}" == "1.66" ]] \
-        || { echo "expected 1.66 (truncate), got: ${out}" >&2; return 1; }
+@test "seconds_to_hours: rounds to the nearest hundredth rather than truncating" {
+    # 6000s = 1.6667h → 1.67 (truncation would give 1.66).
+    run seconds_to_hours 6000
+    [[ "${output}" == "1.67" ]] || { echo "got: ${output}" >&2; return 1; }
+    # 17s = 0.0047h → 0.00; 18s = 0.005h → 0.01.
+    run seconds_to_hours 17
+    [[ "${output}" == "0.00" ]] || { echo "got: ${output}" >&2; return 1; }
+    run seconds_to_hours 18
+    [[ "${output}" == "0.01" ]] || { echo "got: ${output}" >&2; return 1; }
+}
+
+@test "seconds_to_hours: output is always a valid JSON number" {
+    local s
+    for s in 1 60 1799 1800 3599 3600 86399; do
+        run seconds_to_hours "${s}"
+        printf '%s' "${output}" | jq -e 'type == "number"' > /dev/null \
+            || { echo "not a JSON number for ${s}s: ${output}" >&2; return 1; }
+    done
+}
+
+@test "hours_to_hundredths: reads integers, decimals, floats and junk" {
+    run hours_to_hundredths 4
+    [[ "${output}" == "400" ]] || { echo "4 → ${output}" >&2; return 1; }
+    run hours_to_hundredths 4.2
+    [[ "${output}" == "420" ]] || { echo "4.2 → ${output}" >&2; return 1; }
+    run hours_to_hundredths 0.30000000000000004
+    [[ "${output}" == "30" ]] || { echo "float → ${output}" >&2; return 1; }
+    run hours_to_hundredths ""
+    [[ "${output}" == "0" ]] || { echo "empty → ${output}" >&2; return 1; }
+    run hours_to_hundredths "n/a"
+    [[ "${output}" == "0" ]] || { echo "junk → ${output}" >&2; return 1; }
+}
+
+@test "hundredths_to_hours: pads hundredths and keeps the sign" {
+    run hundredths_to_hours 5
+    [[ "${output}" == "0.05" ]] || { echo "got: ${output}" >&2; return 1; }
+    run hundredths_to_hours 1234
+    [[ "${output}" == "12.34" ]] || { echo "got: ${output}" >&2; return 1; }
+    run hundredths_to_hours -50
+    [[ "${output}" == "-0.50" ]] || { echo "got: ${output}" >&2; return 1; }
 }
 
 # -----------------------------------------------------------------------------
@@ -149,7 +177,6 @@ setup() {
 
 @test "cmd_status: renders table header and total row when sessions present" {
     require_binary jq  # session_read_meta_title and column rendering use jq via stub
-    require_binary bc
 
     twk_write_fake_config
     config_global_file() { printf '%s\n' "${TWK_CONFIG_DIR}/config"; }
@@ -564,7 +591,6 @@ setup() {
 }
 
 @test "parse_duration: parses decimal hours" {
-    require_binary bc
     run parse_duration "2.5h"
     assert_status 0
     [[ "${output}" == "9000" ]] || { echo "got: ${output}"; return 1; }
@@ -1515,7 +1541,6 @@ EOF
 
 @test "cmd_commit --dry-run: prints DRY RUN header and per-session projection" {
     require_binary jq
-    require_binary bc
     twk_write_fake_config
 
     # Two sessions: one paused (committable), one running (skipped).
@@ -1529,7 +1554,7 @@ EOF
     } > "${TWK_DATA_DIR}/100.session"
     echo "start|${now}" > "${TWK_DATA_DIR}/200.session"
 
-    azdo_resolve_time_field() { echo "Custom.TaskTime"; }
+    azdo_time_field_for_type() { echo "Custom.TaskTime"; }
     azdo_fetch_work_item() {
         printf '%s' '{"id":'"$1"',"fields":{"Custom.TaskTime":2.5}}'
     }
@@ -1558,7 +1583,6 @@ EOF
 
 @test "cmd_commit --dry-run: leaves session files in place (not archived)" {
     require_binary jq
-    require_binary bc
     twk_write_fake_config
 
     local now hour_ago
@@ -1570,7 +1594,7 @@ EOF
         echo "end|${now}"
     } > "${TWK_DATA_DIR}/100.session"
 
-    azdo_resolve_time_field() { echo "Custom.TaskTime"; }
+    azdo_time_field_for_type() { echo "Custom.TaskTime"; }
     azdo_fetch_work_item() { printf '%s' '{"id":100,"fields":{"Custom.TaskTime":0}}'; }
 
     run cmd_commit --dry-run
@@ -1586,7 +1610,6 @@ EOF
 
 @test "cmd_commit --dry-run: reports the right hours total in the summary" {
     require_binary jq
-    require_binary bc
     twk_write_fake_config
 
     local now two_hours_ago
@@ -1598,7 +1621,7 @@ EOF
         echo "end|${now}"
     } > "${TWK_DATA_DIR}/100.session"
 
-    azdo_resolve_time_field() { echo "Custom.TaskTime"; }
+    azdo_time_field_for_type() { echo "Custom.TaskTime"; }
     azdo_fetch_work_item() { printf '%s' '{"id":100,"fields":{"Custom.TaskTime":1.0}}'; }
 
     run cmd_commit --dry-run
@@ -1620,18 +1643,21 @@ EOF
 }
 
 @test "cmd_log: rejects unknown arguments" {
+    twk_write_fake_config
     run cmd_log --bogus
     assert_status 1
     assert_output_contains "unknown argument '--bogus'"
 }
 
 @test "cmd_log: rejects non-numeric --days" {
+    twk_write_fake_config
     run cmd_log --days=abc
     assert_status 1
     assert_output_contains "non-negative integer"
 }
 
 @test "cmd_log: prints 'No commits yet' when committed/ doesn't exist" {
+    twk_write_fake_config
     [[ ! -d "${TWK_DATA_DIR}/committed" ]] || rm -rf "${TWK_DATA_DIR}/committed"
 
     run cmd_log
@@ -1640,6 +1666,7 @@ EOF
 }
 
 @test "cmd_log: prints 'No commits found' with --all when committed/ is empty" {
+    twk_write_fake_config
     mkdir -p "${TWK_DATA_DIR}/committed"
 
     run cmd_log --all
@@ -1648,6 +1675,7 @@ EOF
 }
 
 @test "cmd_log: prints 'No commits in the last N days' when window has nothing" {
+    twk_write_fake_config
     mkdir -p "${TWK_DATA_DIR}/committed"
     # File from 100 days ago — outside the default 7-day window.
     local old_ts=$(( $(date +%s) - 100 * 86400 ))
@@ -1662,8 +1690,8 @@ EOF
 }
 
 @test "cmd_log: default (last 7 days, by date): groups, sorts, totals correctly" {
+    twk_write_fake_config
     require_binary jq
-    require_binary bc
     mkdir -p "${TWK_DATA_DIR}/committed"
 
     local now=$(( $(date +%s) ))
@@ -1713,8 +1741,8 @@ EOF
 }
 
 @test "cmd_log --days=N: filters history by window" {
+    twk_write_fake_config
     require_binary jq
-    require_binary bc
     mkdir -p "${TWK_DATA_DIR}/committed"
 
     local now=$(( $(date +%s) ))
@@ -1750,8 +1778,8 @@ EOF
 }
 
 @test "cmd_log --by-id: groups by work item, prints subtotals" {
+    twk_write_fake_config
     require_binary jq
-    require_binary bc
     mkdir -p "${TWK_DATA_DIR}/committed"
 
     local now=$(( $(date +%s) ))
@@ -1794,8 +1822,8 @@ EOF
 }
 
 @test "cmd_log: skips malformed filenames in committed/" {
+    twk_write_fake_config
     require_binary jq
-    require_binary bc
     mkdir -p "${TWK_DATA_DIR}/committed"
 
     local now=$(( $(date +%s) - 100 ))
@@ -1818,8 +1846,8 @@ EOF
 }
 
 @test "cmd_log: default rows lead with commit time as HH:MM" {
+    twk_write_fake_config
     require_binary jq
-    require_binary bc
     mkdir -p "${TWK_DATA_DIR}/committed"
 
     local now
@@ -1848,8 +1876,8 @@ EOF
 }
 
 @test "cmd_log --by-id: shows full 'YYYY-MM-DD HH:MM' on each entry" {
+    twk_write_fake_config
     require_binary jq
-    require_binary bc
     mkdir -p "${TWK_DATA_DIR}/committed"
 
     local now
@@ -1867,8 +1895,8 @@ EOF
 }
 
 @test "cmd_log --by-id: trailing 'session' uses singular for one entry" {
+    twk_write_fake_config
     require_binary jq
-    require_binary bc
     mkdir -p "${TWK_DATA_DIR}/committed"
 
     local now=$(( $(date +%s) - 100 ))
@@ -1896,7 +1924,6 @@ EOF
 
 @test "cmd_status --with-existing: renders extra columns and post-commit projection" {
     require_binary jq
-    require_binary bc
 
     twk_write_fake_config
     config_global_file() { printf '%s\n' "${TWK_CONFIG_DIR}/config"; }
@@ -1930,7 +1957,6 @@ EOF
 
 @test "cmd_status --with-existing: shows '?' when batch fetch fails" {
     require_binary jq
-    require_binary bc
 
     twk_write_fake_config
     config_global_file() { printf '%s\n' "${TWK_CONFIG_DIR}/config"; }
@@ -1995,7 +2021,6 @@ EOF
 
 @test "cmd_status: 'no title cached' placeholder appears once per untitled session" {
     require_binary jq
-    require_binary bc
 
     twk_write_fake_config
     config_global_file() { printf '%s\n' "${TWK_CONFIG_DIR}/config"; }

@@ -19,6 +19,8 @@ print_usage() {
 Usage:
   Setup
     twk init             Configure Azure DevOps connection
+    twk trust            Approve a project-local .twk/config after reviewing it
+    twk doctor           Show the active config and check the connection
 
   Time tracking (commit cycle — local until 'twk commit'):
     twk start            Start timing a work item
@@ -27,6 +29,7 @@ Usage:
     twk undo             Undo the last event on a session
     twk cancel           Discard an uncommitted session
     twk adjust           Manually adjust recorded time on a session
+    twk add              Add time you forgot to track (e.g. twk add 123 1h30m)
     twk status           View uncommitted time entries
     twk commit           Push accumulated hours to Azure DevOps
 
@@ -62,7 +65,7 @@ Options:
                          (log) Show all committed history rather than just the last N days
     --discussion         (show only) Append the AzDO Discussion thread (comments)
     --dry-run            (commit only) Preview what would be pushed without writing
-    -y, --yes            (reset only) Skip the destructive-action confirmation prompt
+    -y, --yes            (reset, trust) Skip the confirmation prompt
     --days=<n>           (log only) Limit history to the last N days (default 7)
     --by-id              (log only) Group history by work item ID instead of date
 
@@ -88,6 +91,9 @@ main() {
 
     case "${command}" in
         init)    cmd_init "$@" ;;
+        trust)   cmd_trust "$@" ;;
+        doctor)  cmd_doctor "$@" ;;
+        add)     cmd_add "$@" ;;
         start)   cmd_start "$@" ;;
         pause)   cmd_pause "$@" ;;
         end)     cmd_end "$@" ;;

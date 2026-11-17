@@ -138,7 +138,7 @@ EOF
     # 5. commit. cmd_commit calls (per session):
     #      session_read_state → no date call
     #      session_calculate_elapsed_seconds → no date call (ended)
-    #      seconds_to_hours → bc subshell
+    #      seconds_to_hours → rounded hundredths
     #      azdo_resolve_time_field → fetches work item, returns Custom.TimeSpent
     #      azdo_fetch_work_item → existing hours = 0.5
     #      azdo_update_time_spent → mocked, captures call
@@ -146,10 +146,10 @@ EOF
     run cmd_commit
     assert_status 0
     assert_output_contains "#42: committed"
-    # 120s = 0.0333… h → bc with scale=2 yields ".03"
+    # 120s = 0.0333… h → rounds to "0.03"
     assert_output_contains ".03h"
     # Existing 0.5 + new ~0.03 = ~0.53 total.
-    assert_output_contains "(total: .53h)"
+    assert_output_contains "(total: 0.53h)"
     assert_output_contains "Done: 1 committed"
 
     # 6. Verify the archive layout: committed/<id>_<ts>.session and the
@@ -191,7 +191,7 @@ EOF
     # And it was issued with id=42, total_hours ~ .53, time_field = Custom.TimeSpent.
     local args
     args="$(mock_azdo_call_args azdo_update_time_spent)"
-    [[ "${args}" == "42"$'\t'".53"$'\t'"Custom.TimeSpent" ]] \
+    [[ "${args}" == "42"$'\t'"0.53"$'\t'"Custom.TimeSpent"* ]] \
         || { echo "captured args: ${args}" >&2; return 1; }
 }
 

@@ -16,9 +16,9 @@ load 'helpers/setup.bash'
 setup() {
     twk_setup_env
 
-    # Create stub binaries for curl/jq/bc that satisfy `command -v`. The jq
-    # and bc are real (python-based) stubs; curl is just a no-op. These are
-    # needed by the bin/twk end-to-end test below.
+    # Create stub binaries for curl/jq that satisfy `command -v`. jq is the
+    # real (python-based) stub; curl is just a no-op. These are needed by
+    # the bin/twk end-to-end test below.
     export TWK_DISPATCH_BIN="${TWK_BATS_TMP}/dispatch_bin"
     mkdir -p "${TWK_DISPATCH_BIN}"
     cat > "${TWK_DISPATCH_BIN}/curl" <<'EOF'
@@ -27,7 +27,6 @@ exit 0
 EOF
     chmod +x "${TWK_DISPATCH_BIN}/curl"
     ln -sf "${TWK_TEST_HELPERS_DIR}/stubs/jq" "${TWK_DISPATCH_BIN}/jq"
-    ln -sf "${TWK_TEST_HELPERS_DIR}/stubs/bc" "${TWK_DISPATCH_BIN}/bc"
 
     # Write a fake config so bin/twk's command path can find it without
     # prompting. cmd_init we'll override; everyone else uses config_require.
@@ -305,5 +304,5 @@ _first_call() {
     PATH="${TWK_DISPATCH_BIN}:${PATH}" \
         run "${TWK_REPO}/bin/twk" version
     assert_status 0
-    assert_output_contains "twk 0.1.0"
+    assert_output_contains "twk 0.2.0"
 }

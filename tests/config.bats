@@ -493,13 +493,14 @@ _install_cmd_init_mocks() {
     config_find_local() { return 1; }
 
     # Fed prompts in order:
-    #   organisation, project, team (blank ok), pat, time_field_task,
+    #   organisation, project, team (blank ok), auth (pat), pat, time_field_task,
     #   time_field_feature (blank → defaults to task), state_active,
     #   state_paused, state_done.
     cmd_init --global <<'EOF'
 myorg
 MyProject
 
+pat
 mypat
 Custom.TimeSpent
 
@@ -544,6 +545,7 @@ EOF
 myorg
 MyProject
 
+pat
 mypat
 Custom.TimeSpent
 Custom.FeatureTime
@@ -574,6 +576,7 @@ EOF
 
 MyProject
 
+pat
 mypat
 Custom.TimeSpent
 
@@ -595,6 +598,7 @@ EOF
 myorg
 
 
+pat
 mypat
 Custom.TimeSpent
 
@@ -616,6 +620,7 @@ EOF
 myorg
 MyProject
 
+pat
 
 Custom.TimeSpent
 
@@ -636,6 +641,7 @@ EOF
 myorg
 MyProject
 
+pat
 mypat
 
 

@@ -90,7 +90,7 @@ resolve_session_with_fzf() {
         return 1
     fi
 
-    echo "${selected}" | grep -oP '(?<=#)\d+'
+    printf '%s\n' "${selected}" | sed -n 's/^#\([0-9][0-9]*\).*/\1/p'
 }
 
 resolve_session_with_numbered_list() {
@@ -255,7 +255,7 @@ resolve_with_fzf() {
         return 1
     fi
 
-    echo "${selected}" | grep -oP '(?<=#)\d+'
+    printf '%s\n' "${selected}" | sed -n 's/^#\([0-9][0-9]*\).*/\1/p'
 }
 
 resolve_with_numbered_list() {
@@ -296,7 +296,7 @@ resolve_self() {
     # Returns the authenticated user's principalName (typically email/UPN)
     # by querying connectionData. Used by 'twk assign --me'.
     local response
-    response="$(azdo_fetch_authenticated_user 2>/dev/null)" || {
+    response="$(azdo_fetch_authenticated_user)" || {
         echo "Error: could not query authenticated user from Azure DevOps." >&2
         echo "       Verify your PAT and that the organisation is reachable." >&2
         return 1
@@ -338,7 +338,7 @@ _user_picker_sprint_tsv() {
 
 _user_picker_org_tsv() {
     local response
-    response="$(azdo_fetch_org_users 2>/dev/null)" || {
+    response="$(azdo_fetch_org_users)" || {
         echo "Error: could not query org-wide users from Azure DevOps." >&2
         echo "       The Graph API needs 'Graph (Read)' scope on your PAT, in" >&2
         echo "       addition to 'Work Items (Read & Write)'. Regenerate your" >&2
